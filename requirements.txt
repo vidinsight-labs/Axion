@@ -1,0 +1,19 @@
+# CPU Load Balancer v3 - Requirements
+#
+# Bu proje sadece Python standard library kullanır.
+# Harici bağımlılık yoktur.
+#
+# Minimum Python versiyonu: 3.8+
+# Test edilen versiyonlar: 3.8, 3.9, 3.10, 3.11, 3.12
+
+# Python versiyonu kontrolü için (opsiyonel)
+# python_requires = >=3.8
+
+# Geliştirme bağımlılıkları (opsiyonel)
+# Bu bağımlılıklar sadece test ve geliştirme için gereklidir
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.0.0
+

@@ -1,0 +1,21 @@
+============================================================
+BASİT KULLANIM ÖRNEĞİ
+============================================================
+
+📊 Config:
+   CPU-bound workers: 1
+   IO-bound workers: 7
+
+🔧 Engine başlatılıyor...
+✅ Engine başlatıldı
+
+📤 Görev gönderiliyor: fcccdf0b...
+✅ Görev gönderildi: fcccdf0b...
+
+⏳ Sonuç bekleniyor...
+
+✅ Görev başarılı!
+   Sonuç: {'result': 84, 'original_value': 42, 'test_mode': True, 'task_id': 'fcccdf0b-562d-4985-a019-568dacd04ae7', 'worker_id': 'io-0', 'status': 'success'}
+
+🛑 Engine kapatılıyor...
+✅ Engine kapatıldı

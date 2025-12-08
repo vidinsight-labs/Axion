@@ -1,0 +1,10 @@
+{
+  "input_queue_size": 1000,
+  "output_queue_size": 10000,
+  "cpu_bound_count": 1,
+  "io_bound_count": null,
+  "cpu_bound_task_limit": 1,
+  "io_bound_task_limit": 20,
+  "log_level": "INFO",
+  "queue_poll_timeout": 1.0
+}

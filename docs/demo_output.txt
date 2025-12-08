@@ -1,0 +1,30 @@
+======================================================================
+🚀 CPU LOAD BALANCER - GERÇEK HAYAT DEMO
+======================================================================
+
+📊 Engine Yapılandırması:
+   CPU-bound workers: 2
+   IO-bound workers: 6
+   Input queue: 5000
+   Output queue: 10000
+
+🔧 Engine başlatılıyor...
+INFO:engine:Engine başlatıldı
+INFO:engine:Engine kapatıldı
+✅ Engine başlatıldı!
+
+📊 Sistem Durumu:
+   Engine: 🟢 Çalışıyor
+   input_queue: healthy (size: 0)
+   output_queue: healthy (size: 0)
+   process_pool: healthy (size: 0)
+
+======================================================================
+📊 SENARYO 1: Veri İşleme (CPU-bound)
+======================================================================
+   ✓ Toplama görevi gönderildi: ad28329e...
+   ✓ Çarpma görevi gönderildi: 953d48f7...
+   ✓ Filtreleme görevi gönderildi: 2029cb3c...
+
+   ⏳ Sonuçlar bekleniyor...
+   ✅ Toplama: 5050

@@ -1,0 +1,69 @@
+======================================================================
+GELİŞMİŞ KULLANIM ÖRNEĞİ
+======================================================================
+
+📊 Özel Config:
+   CPU-bound workers: 2 (her biri 1 thread)
+   IO-bound workers: 4 (her biri 10 thread)
+   Queue sizes: 5000/10000
+
+📝 Test script'leri oluşturuluyor...
+✅ Script'ler oluşturuldu
+
+🔧 Engine başlatılıyor...
+✅ Engine başlatıldı
+
+📊 Sistem Durumu:
+   Engine: 🟢 Çalışıyor
+   input_queue: healthy
+   output_queue: healthy
+   process_pool: healthy
+
+======================================================================
+CPU-BOUND GÖREVLER
+======================================================================
+   ✓ Görev 1 gönderildi: 44bfa228... (n=1000)
+   ✓ Görev 2 gönderildi: a0a25259... (n=2000)
+   ✓ Görev 3 gönderildi: 3900caf5... (n=3000)
+
+======================================================================
+IO-BOUND GÖREVLER
+======================================================================
+   ✓ Görev 1 gönderildi: 97e81457... (delay=0.1s)
+   ✓ Görev 2 gönderildi: 324f586c... (delay=0.2s)
+   ✓ Görev 3 gönderildi: eee0afa5... (delay=0.30000000000000004s)
+   ✓ Görev 4 gönderildi: c8c1dead... (delay=0.4s)
+   ✓ Görev 5 gönderildi: 18b382d1... (delay=0.5s)
+
+======================================================================
+SONUÇLAR
+======================================================================
+
+📊 CPU-bound sonuçları:
+   ✅ 44bfa228...: 332833500
+   ✅ a0a25259...: 2664667000
+   ✅ 3900caf5...: 8995500500
+
+🌐 IO-bound sonuçları:
+   ✅ 97e81457...: completed
+   ✅ 324f586c...: completed
+   ✅ eee0afa5...: completed
+   ✅ c8c1dead...: completed
+   ✅ 18b382d1...: completed
+
+======================================================================
+İSTATİSTİKLER
+======================================================================
+
+📈 Özet:
+   Toplam görev: 8
+   Başarılı: 8
+   Başarısız: 0
+
+📊 Final Durum:
+   input_queue: 8 görev işlendi
+   output_queue: 0 görev işlendi
+
+🧹 Temizlik yapılıyor...
+🛑 Engine kapatılıyor...
+✅ Engine kapatıldı

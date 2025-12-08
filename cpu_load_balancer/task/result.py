@@ -1,3 +1,15 @@
+"""
+Result (Sonuç) Sınıfı
+
+Bu modül, görevlerin çalıştırılması sonucu oluşan sonuçları içerir.
+Sonuçlar başarılı veya başarısız olabilir.
+
+Kullanım:
+    result = Result.success(task_id, data)
+    # veya
+    result = Result.failed(task_id, error)
+"""
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -9,7 +21,16 @@ from ..core.enums import TaskType, TaskStatus
 @dataclass
 class Result:
     """
-    Görev sonucu - basitleştirilmiş
+    Görev sonucu
+    
+    Bir sonuç şunları içerir:
+    - Task ID: Hangi görevin sonucu olduğu
+    - Status: COMPLETED veya FAILED
+    - Data: Başarılı durumda sonuç verisi
+    - Error: Başarısız durumda hata mesajı
+    - Zaman bilgileri: Başlangıç ve bitiş zamanı
+    
+    Sonuçlar queue'ya gönderilmeden önce dict'e dönüştürülür.
     """
     task_id: str 
     status: TaskStatus
@@ -17,18 +38,54 @@ class Result:
     error: Optional[str] = None
     error_details: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
-    completed_at: datetime = field(default_factory=datetime.now(timezone.utc))
+    completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def is_success(self) -> bool:
+        """
+        Başarılı mı?
+        
+        Returns:
+            bool: True ise başarılı, False ise başarısız
+        """
+        return self.status == TaskStatus.COMPLETED
 
     @property
     def duration(self) -> Optional[float]:
-        """Çalışma süresi (saniye)"""
+        """
+        Çalışma süresi (saniye)
+        
+        Returns:
+            float: Başlangıç ve bitiş zamanı varsa süre, yoksa None
+        """
         if self.started_at and self.completed_at:
-            return (self.completed_at - self.started_at).total_seconds()
+            # Timezone-aware datetime'ları karşılaştırmak için normalize et
+            from datetime import timezone
+            started = self.started_at
+            completed = self.completed_at
+            
+            # Eğer biri timezone-aware diğeri değilse, normalize et
+            if started.tzinfo is None and completed.tzinfo is not None:
+                started = started.replace(tzinfo=timezone.utc)
+            elif started.tzinfo is not None and completed.tzinfo is None:
+                completed = completed.replace(tzinfo=timezone.utc)
+            
+            return (completed - started).total_seconds()
         return None
     
     @classmethod
     def success(cls, task_id: str, data: Any, started_at: Optional[datetime] = None) -> "Result":
-        """Başarılı sonuç oluştur"""
+        """
+        Başarılı sonuç oluşturur
+        
+        Args:
+            task_id: Görev ID'si
+            data: Sonuç verisi
+            started_at: Başlangıç zamanı (opsiyonel)
+        
+        Returns:
+            Result: Başarılı sonuç objesi
+        """
         return cls(
             task_id=task_id,
             status=TaskStatus.COMPLETED,
@@ -38,7 +95,17 @@ class Result:
     
     @classmethod
     def failed(cls, task_id: str, error: str, started_at: Optional[datetime] = None) -> "Result":
-        """Başarısız sonuç oluştur"""
+        """
+        Başarısız sonuç oluşturur
+        
+        Args:
+            task_id: Görev ID'si
+            error: Hata mesajı
+            started_at: Başlangıç zamanı (opsiyonel)
+        
+        Returns:
+            Result: Başarısız sonuç objesi
+        """
         return cls(
             task_id=task_id,
             status=TaskStatus.FAILED,

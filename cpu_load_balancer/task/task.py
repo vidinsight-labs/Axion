@@ -1,3 +1,17 @@
+"""
+Task (Görev) Sınıfı
+
+Bu modül, çalıştırılacak görevlerin tanımını içerir.
+Görevler script path, parametreler ve tip bilgisi içerir.
+
+Kullanım:
+    task = Task.create(
+        script_path="my_script.py",
+        params={"value": 42},
+        task_type=TaskType.IO_BOUND
+    )
+"""
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -9,11 +23,20 @@ from ..core.enums import TaskType, TaskStatus
 @dataclass
 class Task:
     """
-    Görev tanımı - basitleştirilmiş
+    Görev tanımı
+    
+    Bir görev şunları içerir:
+    - Script path: Çalıştırılacak Python script'inin yolu
+    - Params: Script'e geçirilecek parametreler
+    - Task type: CPU_BOUND veya IO_BOUND
+    - Status: Görev durumu (PENDING, RUNNING, COMPLETED, FAILED)
+    - Retry bilgileri: Maksimum deneme sayısı ve mevcut deneme
+    
+    Görevler queue'ya gönderilmeden önce dict'e dönüştürülür.
     """
     # Base fields
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: datetime = field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # Task type and status
     task_type: TaskType = TaskType.CPU_BOUND
     status: TaskStatus = TaskStatus.PENDING
@@ -31,7 +54,18 @@ class Task:
         task_type: TaskType = TaskType.IO_BOUND,
         max_retries: int = 3
     ) -> "Task":
-        """Factory metodu - görev oluştur"""
+        """
+        Factory metodu - görev oluşturur
+        
+        Args:
+            script_path: Çalıştırılacak Python script'inin yolu
+            params: Script'e geçirilecek parametreler (dict)
+            task_type: Görev tipi (CPU_BOUND veya IO_BOUND)
+            max_retries: Maksimum deneme sayısı
+        
+        Returns:
+            Task: Yeni görev objesi
+        """
         return cls(
             script_path=script_path,
             params=params or {},
@@ -40,7 +74,14 @@ class Task:
         )
     
     def to_dict(self) -> Dict[str, Any]:
-        """Dict'e dönüştür (queue için)"""
+        """
+        Dict'e dönüştürür (queue için)
+        
+        Multiprocessing.Queue pickle kullanır, bu yüzden dict formatı gerekir.
+        
+        Returns:
+            Dict: Queue'ya gönderilebilir format
+        """
         return {
             "task_id": self.id,
             "script_path": self.script_path,
@@ -51,7 +92,17 @@ class Task:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Task":
-        """Dict'ten oluştur"""
+        """
+        Dict'ten Task objesi oluşturur
+        
+        Queue'dan gelen dict'ten Task objesi oluşturur.
+        
+        Args:
+            data: Queue'dan gelen dict
+        
+        Returns:
+            Task: Yeni Task objesi
+        """
         task_type = TaskType(data.get("task_type", "io_bound"))
         return cls(
             id=data.get("task_id", str(uuid.uuid4())),
