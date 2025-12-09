@@ -27,6 +27,7 @@ from ..queue.input_queue import InputQueue
 from ..queue.output_queue import OutputQueue
 from ..worker.pool import ProcessPool
 from ..status import ComponentStatus
+from .sharded_cache import ShardedResultCache
 
 
 class Engine:
@@ -68,17 +69,19 @@ class Engine:
         
         # Worker pool: Görevleri işleyen process'ler
         self._process_pool: Optional[ProcessPool] = None
-        
-        # Queue processing thread: InputQueue'dan görev alıp worker'lara dağıtır
-        self._queue_thread: Optional[Thread] = None
+
+        # Queue processing threads: InputQueue'dan görev alıp worker'lara dağıtır
+        self._queue_threads: list[Thread] = []
         self._shutdown_event = threading.Event()  # Kapanma sinyali
         
         # Pending tasks: Gönderilen ama henüz tamamlanmamış görevler
         self._pending_tasks: Dict[str, Task] = {}
-        
+        self._pending_tasks_lock = Lock()  # Ayrı lock for pending tasks
+
         # Result cache: Tamamlanan görevlerin sonuçları (batch işlemler için)
         # Queue'dan gelen sonuçlar burada saklanır, istenen task_id gelene kadar bekler
-        self._result_cache: Dict[str, Result] = {}
+        # Sharded cache kullanarak lock contention azaltılmıştır
+        self._result_cache = ShardedResultCache(shard_count=16, max_size_per_shard=100)
     
     def start(self):
         """
@@ -112,12 +115,19 @@ class Engine:
             )
             self._process_pool.start()
             
-            # Queue processing thread'i başlat: InputQueue'dan görev alıp worker'lara dağıtır
-            self._queue_thread = Thread(target=self._process_queue_loop, daemon=True)
-            self._queue_thread.start()
-            
+            # Queue processing threads'leri başlat: InputQueue'dan görev alıp worker'lara dağıtır
+            queue_thread_count = self._config.queue_thread_count
+            for i in range(queue_thread_count):
+                thread = Thread(
+                    target=self._process_queue_loop,
+                    name=f"QueueProcessor-{i}",
+                    daemon=True
+                )
+                thread.start()
+                self._queue_threads.append(thread)
+
             self._started = True
-            self._logger.info("Engine başlatıldı")
+            self._logger.info(f"Engine başlatıldı ({queue_thread_count} queue threads)")
     
     def shutdown(self):
         """Engine'i kapat"""
@@ -130,11 +140,11 @@ class Engine:
             # Process pool'u kapat
             if self._process_pool:
                 self._process_pool.shutdown()
-            
-            # Thread'in bitmesini bekle
-            if self._queue_thread:
-                self._queue_thread.join(timeout=5.0)
-            
+
+            # Tüm queue thread'lerinin bitmesini bekle
+            for thread in self._queue_threads:
+                thread.join(timeout=5.0)
+
             self._started = False
             self._logger.info("Engine kapatıldı")
     
@@ -165,9 +175,9 @@ class Engine:
             raise TaskError("Queue dolu, görev eklenemedi", code="TASK001")
         
         # Pending listesine ekle: Görev takibi için
-        with self._lock:
+        with self._pending_tasks_lock:
             self._pending_tasks[task.id] = task
-        
+
         return task.id
     
     def get_result(self, task_id: str, timeout: Optional[float] = None) -> Optional[Result]:
@@ -192,11 +202,12 @@ class Engine:
             raise EngineError("Engine başlatılmamış", code="ENG002")
         
         # Önce cache'e bak: Batch işlemlerde sonuçlar burada olabilir
-        with self._lock:
-            if task_id in self._result_cache:
-                result = self._result_cache.pop(task_id)
+        cached_result = self._result_cache.get(task_id)
+        if cached_result:
+            # Pending tasks temizle
+            with self._pending_tasks_lock:
                 self._pending_tasks.pop(task_id, None)
-                return result
+            return cached_result
         
         start_time = time.time()
         
@@ -223,19 +234,14 @@ class Engine:
             # Aranan task mı?
             if result.task_id == task_id:
                 # İstenen sonuç bulundu
-                with self._lock:
+                with self._pending_tasks_lock:
                     self._pending_tasks.pop(task_id, None)
                 return result
             else:
                 # İstenen task değil, cache'e kaydet (batch işlemler için)
                 # Başka bir görevin sonucu geldi, kaybetmemek için sakla
-                with self._lock:
-                    self._result_cache[result.task_id] = result
-                    # Cache çok büyümesin (max 1000 sonuç)
-                    if len(self._result_cache) > 1000:
-                        # En eski sonucu sil (basit FIFO)
-                        oldest_key = next(iter(self._result_cache))
-                        self._result_cache.pop(oldest_key)
+                # Sharded cache otomatik LRU eviction yapıyor
+                self._result_cache.put(result.task_id, result)
     
     def _process_queue_loop(self):
         """

@@ -33,13 +33,14 @@ class EngineConfig:
     # Queue ayarları
     input_queue_size: int = 1000
     output_queue_size: int = 10000
-    
+    queue_thread_count: int = 4  # Queue processing thread sayısı
+
     # Worker ayarları
     cpu_bound_count: int = 1
     io_bound_count: Optional[int] = None  # None = otomatik (CPU - 1)
     cpu_bound_task_limit: int = 1
     io_bound_task_limit: int = 20
-    
+
     # Genel ayarlar
     log_level: str = "INFO"
     queue_poll_timeout: float = 1.0
@@ -56,6 +57,8 @@ class EngineConfig:
             raise ValueError("input_queue_size en az 1 olmalı")
         if self.output_queue_size < 1:
             raise ValueError("output_queue_size en az 1 olmalı")
+        if self.queue_thread_count < 1:
+            raise ValueError("queue_thread_count en az 1 olmalı")
         if self.cpu_bound_count < 1:
             raise ValueError("cpu_bound_count en az 1 olmalı")
         if self.io_bound_count < 1:
