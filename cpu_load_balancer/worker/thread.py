@@ -39,12 +39,14 @@ class ThreadPool:
         max_threads: int,
         output_queue: Any,
         executor_func: Optional[Callable] = None,
-        worker_id: str = "unknown"
+        worker_id: str = "unknown",
+        active_task_count: Any = None  # Shared counter
     ):
         self._max_threads = max_threads
         self._output_queue = output_queue
         self._executor_func = executor_func or self._default_executor
         self._worker_id = worker_id
+        self._active_task_count = active_task_count
         
         self._task_queue: Queue = Queue()
         self._threads: list = []
@@ -125,6 +127,11 @@ class ThreadPool:
                     # Aktif thread sayısını azalt
                     with self._lock:
                         self._active_count -= 1
+                    
+                    # Shared counter'ı azalt (varsa)
+                    if self._active_task_count is not None:
+                        with self._active_task_count.get_lock():
+                            self._active_task_count.value -= 1
                 
             except:
                 # Queue timeout veya başka hata, devam et

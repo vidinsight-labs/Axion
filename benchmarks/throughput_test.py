@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Throughput Benchmark Testi
@@ -21,8 +22,8 @@ def create_simple_task(script_path: str, value: int) -> Task:
     """Basit görev oluştur"""
     return Task.create(
         script_path=script_path,
-        params={"value": value, "test": True},
-        task_type=TaskType.IO_BOUND
+        params={"type": "light", "value": value},
+        task_type=TaskType.CPU_BOUND
     )
 
 

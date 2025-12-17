@@ -52,12 +52,19 @@ class ProcessPool:
         self._io_task_limit = io_task_limit
         self._executor_func = executor_func
         
+        # Sharded Queues (Her worker için ayrı kuyruk)
+        self._cpu_queues = []
+        self._io_queues = []
+        
         self._cpu_workers: List[WorkerProcess] = []
         self._io_workers: List[WorkerProcess] = []
         
         self._started = False
         self._shutdown_event = Event()
         self._lock = Lock()
+        
+        # Worker ID counter (Unique ID'ler için)
+        self._worker_counter = 0
     
     def start(self) -> bool:
         """Pool'u başlat"""
@@ -65,25 +72,56 @@ class ProcessPool:
             return True
         
         # CPU-bound worker'ları oluştur
+        # Kuyrukları oluştur
+        self._cpu_queues = [multiprocessing.Queue() for _ in range(self._cpu_bound_count)]
+        
+        # CPU affinity için mevcut çekirdekleri al
+        try:
+            available_cpus = list(range(multiprocessing.cpu_count()))
+        except:
+            available_cpus = []
+            
         for i in range(self._cpu_bound_count):
+            # Worker'a CPU ata (Round-robin)
+            cpu_id = available_cpus[i % len(available_cpus)] if available_cpus else None
+            
+            worker_id = f"cpu-{self._worker_counter}"
+            self._worker_counter += 1
+            
             worker = WorkerProcess(
-                worker_id=f"cpu-{i}",
+                worker_id=worker_id,
                 task_type=TaskType.CPU_BOUND,
                 max_threads=self._cpu_task_limit,
                 output_queue=self._output_queue,
-                executor_func=None  # Process içinde oluşturulacak
+                executor_func=None,
+                cpu_id=cpu_id,
+                nice_level=0,
+                # Work Stealing Parametreleri
+                my_queue=self._cpu_queues[i],
+                all_queues=self._cpu_queues # Tüm kuyrukları bilmeli ki çalabilsin
             )
             worker.start()
             self._cpu_workers.append(worker)
         
         # IO-bound worker'ları oluştur
+        self._io_queues = [multiprocessing.Queue() for _ in range(self._io_bound_count)]
+        
         for i in range(self._io_bound_count):
+            cpu_id = available_cpus[(i + self._cpu_bound_count) % len(available_cpus)] if available_cpus else None
+            
+            worker_id = f"io-{self._worker_counter}"
+            self._worker_counter += 1
+            
             worker = WorkerProcess(
-                worker_id=f"io-{i}",
+                worker_id=worker_id,
                 task_type=TaskType.IO_BOUND,
                 max_threads=self._io_task_limit,
                 output_queue=self._output_queue,
-                executor_func=None  # Process içinde oluşturulacak
+                executor_func=None,
+                cpu_id=cpu_id,
+                nice_level=5,
+                my_queue=self._io_queues[i],
+                all_queues=self._io_queues
             )
             worker.start()
             self._io_workers.append(worker)
@@ -119,10 +157,44 @@ class ProcessPool:
         
         # Load balancing: En az yüklü worker'ı bul
         # active_thread_count() ile worker'ın aktif thread sayısını alır
-        best_worker = min(workers, key=lambda w: w.active_thread_count())
+        # best_worker = min(workers, key=lambda w: w.active_thread_count())
         
-        # Seçilen worker'a görev gönder
-        return best_worker.submit_task(task)
+        # Work Stealing Modunda:
+        # Görevi rastgele veya Round-Robin bir kuyruğa atarız.
+        # Worker'lar zaten boş kalınca diğerlerinden çalacak.
+        # Basitlik için: En az işi olan worker'ın kuyruğuna atalım (Push-based balancing)
+        
+        best_worker_idx = 0
+        min_load = float('inf')
+        
+        for i, worker in enumerate(workers):
+            load = worker.active_thread_count()
+            if load < min_load:
+                min_load = load
+                best_worker_idx = i
+                
+        # Seçilen worker'ın kuyruğuna at
+        if task_type == TaskType.CPU_BOUND:
+            target_queue = self._cpu_queues[best_worker_idx]
+            # Yükü artır
+            self._cpu_workers[best_worker_idx].increment_load()
+        else:
+            target_queue = self._io_queues[best_worker_idx]
+            # Yükü artır
+            self._io_workers[best_worker_idx].increment_load()
+            
+        # Görevi kuyruğa at (Dict olarak)
+        task_data = task.to_dict() if hasattr(task, 'to_dict') else task
+        
+        # WorkerProcess artık Pipe yerine Queue dinliyor.
+        # Ancak WorkerProcess içinde "execute_task" komutu bekleyen bir yapı var.
+        # O yapıyı değiştirmemiz lazım.
+        # Şimdilik uyumluluk için:
+        target_queue.put({
+            "command": "execute_task",
+            "task": task_data
+        })
+        return True
     
     def shutdown(self):
         """Pool'u kapat"""
@@ -133,6 +205,115 @@ class ProcessPool:
         
         self._started = False
     
+    def add_worker(self, task_type: TaskType) -> bool:
+        """Yeni bir worker ekler (Scale Out)"""
+        with self._lock:
+            if not self._started:
+                return False
+                
+            try:
+                available_cpus = list(range(multiprocessing.cpu_count()))
+            except:
+                available_cpus = []
+            
+            worker_id = f"{'cpu' if task_type == TaskType.CPU_BOUND else 'io'}-{self._worker_counter}"
+            self._worker_counter += 1
+            
+            # Yeni kuyruk oluştur
+            new_queue = multiprocessing.Queue()
+            
+            if task_type == TaskType.CPU_BOUND:
+                self._cpu_queues.append(new_queue)
+                # Yeni worker için CPU seç (Round-robin)
+                idx = len(self._cpu_workers)
+                cpu_id = available_cpus[idx % len(available_cpus)] if available_cpus else None
+                
+                worker = WorkerProcess(
+                    worker_id=worker_id,
+                    task_type=TaskType.CPU_BOUND,
+                    max_threads=self._cpu_task_limit,
+                    output_queue=self._output_queue,
+                    executor_func=None,
+                    cpu_id=cpu_id,
+                    nice_level=0,
+                    my_queue=new_queue,
+                    all_queues=self._cpu_queues
+                )
+                worker.start()
+                self._cpu_workers.append(worker)
+                self._cpu_bound_count += 1
+                
+            else:
+                self._io_queues.append(new_queue)
+                idx = len(self._io_workers)
+                cpu_id = available_cpus[(idx + self._cpu_bound_count) % len(available_cpus)] if available_cpus else None
+                
+                worker = WorkerProcess(
+                    worker_id=worker_id,
+                    task_type=TaskType.IO_BOUND,
+                    max_threads=self._io_task_limit,
+                    output_queue=self._output_queue,
+                    executor_func=None,
+                    cpu_id=cpu_id,
+                    nice_level=5,
+                    my_queue=new_queue,
+                    all_queues=self._io_queues
+                )
+                worker.start()
+                self._io_workers.append(worker)
+                self._io_bound_count += 1
+                
+            return True
+
+    def remove_worker(self, task_type: TaskType) -> bool:
+        """Bir worker'ı kapatır (Scale In)"""
+        with self._lock:
+            if not self._started:
+                return False
+                
+            if task_type == TaskType.CPU_BOUND:
+                if not self._cpu_workers:
+                    return False
+                # En son eklenen worker'ı kapat (LIFO)
+                worker = self._cpu_workers.pop()
+                queue = self._cpu_queues.pop()
+                self._cpu_bound_count -= 1
+            else:
+                if not self._io_workers:
+                    return False
+                worker = self._io_workers.pop()
+                queue = self._io_queues.pop()
+                self._io_bound_count -= 1
+                
+            # Worker'a kapanma sinyali gönder
+            try:
+                queue.put({"command": "shutdown"})
+            except:
+                pass
+                
+            # Worker'ın bitmesini bekleme (arka planda kapansın)
+            # worker.join() yaparsak burası bloklanır, gerek yok.
+            
+            return True
+
+    def resize(self, task_type: TaskType, target_count: int):
+        """Worker sayısını hedefe ayarlar"""
+        current_count = len(self._cpu_workers) if task_type == TaskType.CPU_BOUND else len(self._io_workers)
+        
+        if target_count > current_count:
+            # Büyüme
+            for _ in range(target_count - current_count):
+                self.add_worker(task_type)
+        elif target_count < current_count:
+            # Küçülme
+            for _ in range(current_count - target_count):
+                self.remove_worker(task_type)
+                
+    def get_worker_count(self, task_type: TaskType) -> int:
+        if task_type == TaskType.CPU_BOUND:
+            return len(self._cpu_workers)
+        return len(self._io_workers)
+        
     def get_status(self) -> ComponentStatus:
         """Pool durumu"""
         cpu_active = sum(w.active_thread_count() for w in self._cpu_workers)

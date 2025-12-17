@@ -14,8 +14,8 @@ Kullanım:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
 import uuid
+from typing import Any, Dict, Optional, List
 
 from ..core.enums import TaskType, TaskStatus
 
@@ -45,6 +45,8 @@ class Task:
     script_path: str = ""
     max_retries: int = 3
     retry_count: int = 0
+    # Workflow dependencies
+    dependencies: List[str] = field(default_factory=list)  # Beklenen task ID'leri
 
     @classmethod
     def create(
@@ -52,7 +54,8 @@ class Task:
         script_path: str,
         params: Optional[Dict[str, Any]] = None,
         task_type: TaskType = TaskType.IO_BOUND,
-        max_retries: int = 3
+        max_retries: int = 3,
+        dependencies: Optional[List[str]] = None
     ) -> "Task":
         """
         Factory metodu - görev oluşturur
@@ -70,7 +73,8 @@ class Task:
             script_path=script_path,
             params=params or {},
             task_type=task_type,
-            max_retries=max_retries
+            max_retries=max_retries,
+            dependencies=dependencies or []
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -88,6 +92,7 @@ class Task:
             "params": self.params,
             "task_type": self.task_type.value,
             "max_retries": self.max_retries,
+            "dependencies": self.dependencies,
         }
     
     @classmethod
@@ -109,5 +114,6 @@ class Task:
             script_path=data.get("script_path", ""),
             params=data.get("params", {}),
             task_type=task_type,
-            max_retries=data.get("max_retries", 3)
+            max_retries=data.get("max_retries", 3),
+            dependencies=data.get("dependencies", [])
         )

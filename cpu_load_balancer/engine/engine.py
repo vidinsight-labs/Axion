@@ -15,6 +15,7 @@ Kullanım:
 import logging
 import threading
 import time
+import multiprocessing
 from typing import Optional, Dict, Any
 from threading import Lock, Thread
 
@@ -27,6 +28,8 @@ from ..queue.input_queue import InputQueue
 from ..queue.output_queue import OutputQueue
 from ..worker.pool import ProcessPool
 from ..status import ComponentStatus
+from ..core.backpressure import BackpressureController, SystemHealth
+from ..core.workflow import WorkflowManager
 
 
 class Engine:
@@ -79,6 +82,18 @@ class Engine:
         # Result cache: Tamamlanan görevlerin sonuçları (batch işlemler için)
         # Queue'dan gelen sonuçlar burada saklanır, istenen task_id gelene kadar bekler
         self._result_cache: Dict[str, Result] = {}
+        
+        # Backpressure Controller: Sistem sağlığını izler
+        self._backpressure = BackpressureController()
+        
+        # Workflow Manager: DAG ve bağımlılık yönetimi
+        self._workflow_manager = WorkflowManager()
+        
+        # Result processing thread: OutputQueue'dan sonuçları alıp işler
+        self._result_thread: Optional[Thread] = None
+        
+        # Resource Manager thread: Auto-scaling
+        self._resource_manager_thread: Optional[Thread] = None
     
     def start(self):
         """
@@ -116,6 +131,14 @@ class Engine:
             self._queue_thread = Thread(target=self._process_queue_loop, daemon=True)
             self._queue_thread.start()
             
+            # Result processing thread'i başlat: Sonuçları alıp WorkflowManager'a bildirir
+            self._result_thread = Thread(target=self._process_result_loop, daemon=True)
+            self._result_thread.start()
+            
+            # Resource Manager thread'i başlat
+            self._resource_manager_thread = Thread(target=self._resource_manager_loop, daemon=True)
+            self._resource_manager_thread.start()
+            
             self._started = True
             self._logger.info("Engine başlatıldı")
     
@@ -131,9 +154,13 @@ class Engine:
             if self._process_pool:
                 self._process_pool.shutdown()
             
-            # Thread'in bitmesini bekle
+            # Thread'lerin bitmesini bekle
             if self._queue_thread:
-                self._queue_thread.join(timeout=5.0)
+                self._queue_thread.join(timeout=2.0)
+            if self._result_thread:
+                self._result_thread.join(timeout=2.0)
+            if self._resource_manager_thread:
+                self._resource_manager_thread.join(timeout=2.0)
             
             self._started = False
             self._logger.info("Engine kapatıldı")
@@ -157,6 +184,12 @@ class Engine:
         """
         if not self._started:
             raise EngineError("Engine başlatılmamış", code="ENG002")
+            
+        # Backpressure Kontrolü: Sistem aşırı yüklüyse görevi reddet
+        if not self._backpressure.should_accept_task():
+            # Sistem kritik durumda, görev reddediliyor
+            # Kullanıcıya "Lütfen daha sonra tekrar deneyin" mesajı
+            raise TaskError("Sistem aşırı yüklü (Backpressure Active)", code="TASK002")
         
         # Task'ı dict'e dönüştürüp queue'ya ekle (multiprocessing için)
         success = self._input_queue.put(task.to_dict())
@@ -169,6 +202,34 @@ class Engine:
             self._pending_tasks[task.id] = task
         
         return task.id
+            
+    def submit_workflow(self, tasks: list[Task]) -> list[str]:
+        """
+        Workflow (birbirine bağımlı görevler) gönderir
+        
+        Args:
+            tasks: Task listesi (bağımlılıkları tanımlanmış)
+            
+        Returns:
+            list[str]: Task ID listesi
+        """
+        if not self._started:
+            raise EngineError("Engine başlatılmamış", code="ENG002")
+            
+        # WorkflowManager'a kaydet
+        self._workflow_manager.add_workflow(tasks)
+        
+        # Hazır olan görevleri (bağımlılığı olmayanları) hemen kuyruğa at
+        ready_tasks = self._workflow_manager.get_ready_tasks()
+        for task in ready_tasks:
+            self.submit_task(task)
+            
+        # Pending listesine hepsini ekle
+        with self._lock:
+            for task in tasks:
+                self._pending_tasks[task.id] = task
+                
+        return [t.id for t in tasks]
     
     def get_result(self, task_id: str, timeout: Optional[float] = None) -> Optional[Result]:
         """
@@ -200,42 +261,28 @@ class Engine:
         
         start_time = time.time()
         
-        # Queue'dan sonuç al (timeout ile)
+        # Artık sonuçları Result Thread topluyor ve Cache'e yazıyor.
+        # Biz sadece Cache'i kontrol edeceğiz.
+        
         while True:
             # Timeout kontrolü
             if timeout is not None:
                 elapsed = time.time() - start_time
                 if elapsed >= timeout:
                     return None  # Timeout
-                remaining = timeout - elapsed
-            else:
-                remaining = 1.0  # Süresiz bekleme için 1 saniye poll
             
-            # Output queue'dan sonuç al
-            item = self._output_queue.get(timeout=min(remaining, 1.0))
-            
-            if item is None:
-                continue  # Timeout, tekrar dene
-            
-            # Dict'ten Result objesi oluştur
-            result = Result.from_dict(item)
-            
-            # Aranan task mı?
-            if result.task_id == task_id:
-                # İstenen sonuç bulundu
-                with self._lock:
+            # Cache'e bak
+            with self._lock:
+                if task_id in self._result_cache:
+                    result = self._result_cache.pop(task_id) # Al ve sil (veya silme opsiyonel)
+                    # Not: Workflow testlerinde sonucu birden fazla yer isteyebilir, 
+                    # o yüzden pop yerine get kullanmak daha güvenli olabilir ama memory şişer.
+                    # Şimdilik pop yapıyoruz, kullanıcı sorumluluğunda.
                     self._pending_tasks.pop(task_id, None)
-                return result
-            else:
-                # İstenen task değil, cache'e kaydet (batch işlemler için)
-                # Başka bir görevin sonucu geldi, kaybetmemek için sakla
-                with self._lock:
-                    self._result_cache[result.task_id] = result
-                    # Cache çok büyümesin (max 1000 sonuç)
-                    if len(self._result_cache) > 1000:
-                        # En eski sonucu sil (basit FIFO)
-                        oldest_key = next(iter(self._result_cache))
-                        self._result_cache.pop(oldest_key)
+                    return result
+            
+            # Biraz bekle (Busy wait yapma)
+            time.sleep(0.01)
     
     def _process_queue_loop(self):
         """
@@ -265,6 +312,92 @@ class Engine:
                 # Hata durumunda logla ve devam et
                 self._logger.error(f"Queue processing hatası: {e}")
                 time.sleep(0.1)  # Kısa bekleme
+
+    def _process_result_loop(self):
+        """
+        Result processing loop - Arka planda çalışan thread
+        
+        OutputQueue'dan sonuçları alır:
+        1. Result Cache'e yazar.
+        2. WorkflowManager'a bildirir (yeni görevleri tetikler).
+        """
+        while not self._shutdown_event.is_set():
+            try:
+                # Output queue'dan sonuç al
+                item = self._output_queue.get(timeout=0.1)
+                
+                if item is None:
+                    continue
+                
+                # Result objesi oluştur
+                result = Result.from_dict(item)
+                
+                # 1. Cache'e yaz
+                with self._lock:
+                    self._result_cache[result.task_id] = result
+                    # Cache temizliği (basit)
+                    if len(self._result_cache) > 5000:
+                        self._result_cache.pop(next(iter(self._result_cache)))
+                
+                # 2. Workflow Manager'a bildir
+                new_tasks = self._workflow_manager.task_completed(result)
+                
+                # 3. Yeni açılan görevleri kuyruğa at
+                for task in new_tasks:
+                    try:
+                        self.submit_task(task)
+                    except Exception as e:
+                        self._logger.error(f"Workflow task submission error: {e}")
+                        
+            except Exception as e:
+                self._logger.error(f"Result processing hatası: {e}")
+                time.sleep(0.1)
+
+    def _resource_manager_loop(self):
+        """
+        Resource Manager Loop - Auto-Scaling
+        
+        Sistemi izler ve worker sayısını dinamik olarak ayarlar.
+        """
+        while not self._shutdown_event.is_set():
+            try:
+                time.sleep(5.0)  # 5 saniyede bir kontrol et
+                
+                if not self._process_pool:
+                    continue
+                    
+                # Metrikleri al
+                # InputQueue boyutu + Worker'lardaki aktif işler
+                input_queue_size = self._input_queue.size()
+                
+                # ProcessPool status'undan aktif iş sayısını al
+                pool_status = self._process_pool.get_status()
+                active_tasks = pool_status.metrics.get('cpu_active_threads', 0)
+                
+                total_load = input_queue_size + active_tasks
+                cpu_worker_count = self._process_pool.get_worker_count(TaskType.CPU_BOUND)
+                
+                # Basit Scaling Algoritması
+                # Hedef: Her worker başına en fazla 5 aktif iş olsun
+                
+                if total_load > cpu_worker_count * 5:
+                    # Scale Out (Büyüme)
+                    # Max limit: 2 * CPU Core
+                    max_workers = multiprocessing.cpu_count() * 2
+                    
+                    if cpu_worker_count < max_workers:
+                        self._logger.info(f"Auto-Scaling: Yük arttı ({total_load} iş), yeni worker ekleniyor...")
+                        self._process_pool.add_worker(TaskType.CPU_BOUND)
+                        
+                elif total_load < cpu_worker_count * 2 and cpu_worker_count > self._config.cpu_bound_count:
+                    # Scale In (Küçülme)
+                    # Min limit: Config'deki başlangıç sayısı
+                    self._logger.info(f"Auto-Scaling: Yük azaldı ({total_load} iş), worker kapatılıyor...")
+                    self._process_pool.remove_worker(TaskType.CPU_BOUND)
+                    
+            except Exception as e:
+                self._logger.error(f"Resource manager hatası: {e}")
+                time.sleep(5.0)
     
     def get_status(self) -> Dict[str, Any]:
         """Engine durumu"""
