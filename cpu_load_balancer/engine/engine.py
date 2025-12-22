@@ -154,13 +154,17 @@ class Engine:
             if self._process_pool:
                 self._process_pool.shutdown()
             
-            # Thread'lerin bitmesini bekle
+            # Thread'lerin bitmesini bekle (daha uzun timeout)
             if self._queue_thread:
-                self._queue_thread.join(timeout=2.0)
+                self._queue_thread.join(timeout=5.0)
             if self._result_thread:
-                self._result_thread.join(timeout=2.0)
+                self._result_thread.join(timeout=5.0)
             if self._resource_manager_thread:
-                self._resource_manager_thread.join(timeout=2.0)
+                self._resource_manager_thread.join(timeout=5.0)
+            
+            # Process'lerin tamamen kapanmasını bekle
+            if self._process_pool:
+                self._process_pool.wait_for_shutdown(timeout=10.0)
             
             self._started = False
             self._logger.info("Engine kapatıldı")

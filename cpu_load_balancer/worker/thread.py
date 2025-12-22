@@ -40,13 +40,15 @@ class ThreadPool:
         output_queue: Any,
         executor_func: Optional[Callable] = None,
         worker_id: str = "unknown",
-        active_task_count: Any = None  # Shared counter
+        active_task_count: Any = None,  # Shared counter
+        thread_pool_queue_size: Any = None  # Shared counter for queue size
     ):
         self._max_threads = max_threads
         self._output_queue = output_queue
         self._executor_func = executor_func or self._default_executor
         self._worker_id = worker_id
         self._active_task_count = active_task_count
+        self._thread_pool_queue_size = thread_pool_queue_size
         
         self._task_queue: Queue = Queue()
         self._threads: list = []
@@ -67,16 +69,36 @@ class ThreadPool:
     def submit_task(self, task_dict: Dict[str, Any]):
         """Görev gönder"""
         self._task_queue.put(task_dict)
+        # Shared counter'ı güncelle
+        if self._thread_pool_queue_size is not None:
+            with self._thread_pool_queue_size.get_lock():
+                self._thread_pool_queue_size.value = self._task_queue.qsize()
+        # Shared counter'ı güncelle
+        if self._thread_pool_queue_size is not None:
+            with self._thread_pool_queue_size.get_lock():
+                self._thread_pool_queue_size.value = self._task_queue.qsize()
+    
+    def queue_size(self) -> int:
+        """ThreadPool queue'sundaki görev sayısı"""
+        return self._task_queue.qsize()
+    
+    def can_accept_task(self) -> bool:
+        """Yeni görev kabul edebilir mi? (queue size < max_threads)"""
+        return self._task_queue.qsize() < self._max_threads
     
     def shutdown(self):
         """Thread pool'u kapat"""
         self._shutdown_event.set()
         # Queue'ya None ekle ki thread'ler çıksın
         for _ in self._threads:
-            self._task_queue.put(None)
+            try:
+                self._task_queue.put(None)
+            except:
+                pass
         
+        # Thread'lerin bitmesini bekle (daha uzun timeout)
         for thread in self._threads:
-            thread.join(timeout=2.0)
+            thread.join(timeout=5.0)
     
     def _worker_loop(self):
         """
@@ -89,12 +111,21 @@ class ThreadPool:
                 # Queue'dan görev al (timeout ile)
                 task_dict = self._task_queue.get(timeout=0.1)
                 
+                # Shared counter'ı güncelle (görev alındı, queue size azaldı)
+                if self._thread_pool_queue_size is not None:
+                    with self._thread_pool_queue_size.get_lock():
+                        self._thread_pool_queue_size.value = self._task_queue.qsize()
+                
                 if task_dict is None:  # Shutdown signal
                     break
                 
                 # Aktif thread sayısını artır
                 with self._lock:
                     self._active_count += 1
+
+                if self._active_task_count is not None:
+                    with self._active_task_count.get_lock():
+                        self._active_task_count.value += 1
                 
                 try:
                     # Dict'ten Task objesi oluştur

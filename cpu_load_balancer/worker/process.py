@@ -50,6 +50,8 @@ class WorkerProcess:
         
         # Shared counter for active tasks
         self._active_task_count = multiprocessing.Value('i', 0)
+        # Shared counter for ThreadPool queue size
+        self._thread_pool_queue_size = multiprocessing.Value('i', 0)
     
     def start(self):
         """Process'i başlat"""
@@ -64,6 +66,7 @@ class WorkerProcess:
                 self._max_threads,
                 self._worker_id,
                 self._active_task_count,
+                self._thread_pool_queue_size,
                 self._cpu_id,
                 self._nice_level,
                 self._my_queue,
@@ -92,15 +95,36 @@ class WorkerProcess:
     def shutdown(self):
         """Process'i kapat"""
         try:
-            self._cmd_pipe.send({"command": "shutdown"})
+            # Shutdown komutu gönder
+            if self._cmd_pipe and not self._cmd_pipe.closed:
+                try:
+                    self._cmd_pipe.send({"command": "shutdown"})
+                except:
+                    pass
+            
+            # Process'in kapanmasını bekle
             if self._process:
                 self._process.join(timeout=5.0)
-        except:
+                
+                # Hala çalışıyorsa terminate et
+                if self._process.is_alive():
+                    self._process.terminate()
+                    self._process.join(timeout=2.0)
+                    
+                    # Hala çalışıyorsa kill et
+                    if self._process.is_alive():
+                        self._process.kill()
+                        self._process.join(timeout=1.0)
+        except Exception:
             pass
     
     def active_thread_count(self) -> int:
         """Aktif thread sayısı (yaklaşık)"""
-        return self._active_task_count.value
+        return self._active_task_count.value, self._my_queue.qsize()
+    
+    def thread_pool_queue_size(self) -> int:
+        """ThreadPool queue size'ı"""
+        return self._thread_pool_queue_size.value
         
     def increment_load(self):
         """Yükü artır (Main process'ten çağrılır)"""
@@ -120,6 +144,7 @@ class WorkerProcess:
             '_executor_func': None,
             '_process': None,  # Process objesi pickle edilemez
             '_active_task_count': self._active_task_count,
+            '_thread_pool_queue_size': self._thread_pool_queue_size,
             '_cpu_id': self._cpu_id,
             '_nice_level': self._nice_level,
             '_my_queue': self._my_queue,
@@ -138,13 +163,14 @@ class WorkerProcess:
         self._executor_func = None
         self._process = None
         self._active_task_count = state['_active_task_count']
+        self._thread_pool_queue_size = state.get('_thread_pool_queue_size', multiprocessing.Value('i', 0))
         self._cpu_id = state.get('_cpu_id')
         self._nice_level = state.get('_nice_level', 0)
         self._my_queue = state.get('_my_queue')
         self._all_queues = state.get('_all_queues', [])
     
     @staticmethod
-    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, cpu_id, nice_level, my_queue, all_queues):
+    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, thread_pool_queue_size, cpu_id, nice_level, my_queue, all_queues):
         """Process içinde çalışan fonksiyon"""
         
         # 1. Process Önceliğini Ayarla (Nice Value)
@@ -171,7 +197,8 @@ class WorkerProcess:
             output_queue=output_queue,
             executor_func=executor_func,  # None olacak, ThreadPool içinde oluşturulacak
             worker_id=worker_id,
-            active_task_count=active_task_count  # Counter'ı ThreadPool'a geçir
+            active_task_count=active_task_count,  # Counter'ı ThreadPool'a geçir
+            thread_pool_queue_size=thread_pool_queue_size  # Queue size counter'ı
         )
         thread_pool.start()
         
@@ -180,6 +207,24 @@ class WorkerProcess:
         while not shutdown_event.is_set():
             request = None
             
+            # ThreadPool'un queue size'ını kontrol et
+            # max_threads'tan fazla görev göndermemeliyiz
+            thread_pool_queue_size_val = thread_pool.queue_size()
+            
+            # Shared counter'ı güncelle (main process'ten okunabilmesi için)
+            with thread_pool_queue_size.get_lock():
+                thread_pool_queue_size.value = thread_pool_queue_size_val
+            
+            if thread_pool_queue_size_val >= max_threads:
+                # ThreadPool queue'su dolu, yeni görev gönderme
+                time.sleep(0.001)
+                continue
+            
+            # Aktif görev sayısı kontrolü (ek güvenlik)
+            if active_task_count.value >= max_threads:
+                time.sleep(0.001)
+                continue
+
             # 1. Önce kendi kuyruğuna bak (Öncelikli)
             if my_queue:
                 try:
@@ -188,16 +233,32 @@ class WorkerProcess:
                     pass
             
             # 2. Kendi kuyruğu boşsa, diğerlerinden çal (Work Stealing)
+            # 2. Kendi kuyruğu boşsa, diğerlerinden çal (Work Stealing)
             if request is None and all_queues:
-                # Rastgele bir kurbandan çalmaya çalış
-                # Tüm kuyrukları denemek yerine rastgele 1-2 tanesini denemek daha verimlidir
-                victim_queue = random.choice(all_queues)
-                if victim_queue != my_queue:
+                # Diğer queue'ları al ve size'larına göre sırala
+                # En dolu olanları önce dene (daha yüksek başarı şansı)
+                other_queues = []
+                
+                for q in all_queues:
+                    if q != my_queue:
+                        try:
+                            size = q.qsize()  # Hızlı kontrol
+                            if size > 0:  # Sadece dolu olanları ekle
+                                other_queues.append((size, q))
+                        except:
+                            # qsize() başarısız olursa yine de dene
+                            other_queues.append((1, q))  # Varsayılan olarak dene
+                
+                # Size'a göre sırala (en dolu olanlar önce)
+                other_queues.sort(reverse=True, key=lambda x: x[0])
+                
+                # En dolu olanlardan başlayarak dene
+                for size, victim_queue in other_queues:
                     try:
                         request = victim_queue.get_nowait()
-                        # Çaldık!
+                        break  # Bulduğumuzu al, devam etme
                     except queue.Empty:
-                        pass
+                        continue  # Bir sonrakini dene
             
             # 3. Hala iş yoksa Pipe'ı kontrol et (Eski usul komutlar için)
             if request is None:
