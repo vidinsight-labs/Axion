@@ -1,7 +1,7 @@
 {
   "input_queue_size": 1000,
   "output_queue_size": 10000,
-  "cpu_bound_count": 1,
+  "cpu_bound_count": 3,
   "io_bound_count": null,
   "cpu_bound_task_limit": 1,
   "io_bound_task_limit": 20,

@@ -168,7 +168,8 @@ class ProcessPool:
         min_load = float('inf')
         
         for i, worker in enumerate(workers):
-            load = worker.active_thread_count()
+            active_tasks, queue_size = worker.active_thread_count()
+            load = active_tasks + queue_size
             if load < min_load:
                 min_load = load
                 best_worker_idx = i
@@ -176,12 +177,8 @@ class ProcessPool:
         # Seçilen worker'ın kuyruğuna at
         if task_type == TaskType.CPU_BOUND:
             target_queue = self._cpu_queues[best_worker_idx]
-            # Yükü artır
-            self._cpu_workers[best_worker_idx].increment_load()
         else:
             target_queue = self._io_queues[best_worker_idx]
-            # Yükü artır
-            self._io_workers[best_worker_idx].increment_load()
             
         # Görevi kuyruğa at (Dict olarak)
         task_data = task.to_dict() if hasattr(task, 'to_dict') else task
@@ -200,10 +197,42 @@ class ProcessPool:
         """Pool'u kapat"""
         self._shutdown_event.set()
         
+        # Tüm worker'ları kapat
         for worker in self._cpu_workers + self._io_workers:
             worker.shutdown()
         
+        # Process'lerin kapanmasını bekle
+        for worker in self._cpu_workers + self._io_workers:
+            if worker._process and worker._process.is_alive():
+                worker._process.join(timeout=5.0)
+                # Hala çalışıyorsa terminate et
+                if worker._process.is_alive():
+                    worker._process.terminate()
+                    worker._process.join(timeout=2.0)
+                    if worker._process.is_alive():
+                        worker._process.kill()
+                        worker._process.join(timeout=1.0)
+        
         self._started = False
+    
+    def wait_for_shutdown(self, timeout: float = 10.0):
+        """Tüm process'lerin kapanmasını bekler"""
+        import time
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            all_dead = True
+            for worker in self._cpu_workers + self._io_workers:
+                if worker._process and worker._process.is_alive():
+                    all_dead = False
+                    break
+            
+            if all_dead:
+                return True
+            
+            time.sleep(0.1)
+        
+        return False
     
     def add_worker(self, task_type: TaskType) -> bool:
         """Yeni bir worker ekler (Scale Out)"""
@@ -316,8 +345,41 @@ class ProcessPool:
         
     def get_status(self) -> ComponentStatus:
         """Pool durumu"""
-        cpu_active = sum(w.active_thread_count() for w in self._cpu_workers)
-        io_active = sum(w.active_thread_count() for w in self._io_workers)
+        cpu_active = sum(w.active_thread_count()[0] for w in self._cpu_workers)
+        io_active = sum(w.active_thread_count()[0] for w in self._io_workers)
+        
+        # Her worker'ın aktif görev sayısını topla
+        cpu_worker_tasks = {}
+        for i, worker in enumerate(self._cpu_workers):
+            worker_id = worker._worker_id
+            active_tasks, queue_size = worker.active_thread_count()
+            try:
+                queue_size = self._cpu_queues[i].qsize() if i < len(self._cpu_queues) else 0
+            except:
+                queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
+            thread_pool_queue_size = worker.thread_pool_queue_size()
+            cpu_worker_tasks[worker_id] = {
+                "active_tasks": active_tasks,
+                "queue_size": queue_size,
+                "thread_pool_queue_size": thread_pool_queue_size,
+                "total_load": active_tasks + queue_size + thread_pool_queue_size
+            }
+        
+        io_worker_tasks = {}
+        for i, worker in enumerate(self._io_workers):
+            worker_id = worker._worker_id
+            active_tasks, queue_size = worker.active_thread_count()
+            try:
+                queue_size = self._io_queues[i].qsize() if i < len(self._io_queues) else 0
+            except:
+                queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
+            thread_pool_queue_size = worker.thread_pool_queue_size()
+            io_worker_tasks[worker_id] = {
+                "active_tasks": active_tasks,
+                "queue_size": queue_size,
+                "thread_pool_queue_size": thread_pool_queue_size,
+                "total_load": active_tasks + queue_size + thread_pool_queue_size
+            }
         
         metrics = {
             "cpu_bound_workers": len(self._cpu_workers),
@@ -326,6 +388,8 @@ class ProcessPool:
             "cpu_active_threads": cpu_active,
             "io_active_threads": io_active,
             "total_active_threads": cpu_active + io_active,
+            "cpu_worker_tasks": cpu_worker_tasks,  # Her CPU worker'ın görev sayıları
+            "io_worker_tasks": io_worker_tasks,    # Her IO worker'ın görev sayıları
         }
         
         health = "healthy" if self._started else "unhealthy"
