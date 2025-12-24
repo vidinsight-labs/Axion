@@ -94,6 +94,11 @@ class Engine:
         
         # Resource Manager thread: Auto-scaling
         self._resource_manager_thread: Optional[Thread] = None
+
+        self._last_scale_time = 0.0
+        self._autoscale_mode = "NORMAL"
+        self._pressure_until = 0
+        self._last_scale_time = 0
     
     def start(self):
         """
@@ -255,8 +260,7 @@ class Engine:
         """
         if not self._started:
             raise EngineError("Engine başlatılmamış", code="ENG002")
-        
-        # Önce cache'e bak: Batch işlemlerde sonuçlar burada olabilir
+
         with self._lock:
             if task_id in self._result_cache:
                 result = self._result_cache.pop(task_id)
@@ -269,7 +273,6 @@ class Engine:
         # Biz sadece Cache'i kontrol edeceğiz.
         
         while True:
-            # Timeout kontrolü
             if timeout is not None:
                 elapsed = time.time() - start_time
                 if elapsed >= timeout:
@@ -284,8 +287,7 @@ class Engine:
                     # Şimdilik pop yapıyoruz, kullanıcı sorumluluğunda.
                     self._pending_tasks.pop(task_id, None)
                     return result
-            
-            # Biraz bekle (Busy wait yapma)
+
             time.sleep(0.01)
     
     def _process_queue_loop(self):
@@ -297,25 +299,19 @@ class Engine:
         """
         while not self._shutdown_event.is_set():
             try:
-                # Input queue'dan görev al (timeout ile)
                 task_dict = self._input_queue.get(timeout=self._config.queue_poll_timeout)
                 
                 if task_dict is None:
-                    continue  # Timeout, tekrar dene
-                
-                # Dict'ten Task objesi oluştur
+                    continue
+
                 task = Task.from_dict(task_dict)
-                
-                # Task type'ı belirle (CPU_BOUND veya IO_BOUND)
                 task_type = task.task_type
-                
-                # Process pool'a gönder: Load balancing burada yapılır
+
                 self._process_pool.submit_task(task, task_type)
             
             except Exception as e:
-                # Hata durumunda logla ve devam et
                 self._logger.error(f"Queue processing hatası: {e}")
-                time.sleep(0.1)  # Kısa bekleme
+                time.sleep(0.1)
 
     def _process_result_loop(self):
         """
@@ -327,26 +323,20 @@ class Engine:
         """
         while not self._shutdown_event.is_set():
             try:
-                # Output queue'dan sonuç al
                 item = self._output_queue.get(timeout=0.1)
                 
                 if item is None:
                     continue
-                
-                # Result objesi oluştur
+
                 result = Result.from_dict(item)
-                
-                # 1. Cache'e yaz
+
                 with self._lock:
                     self._result_cache[result.task_id] = result
-                    # Cache temizliği (basit)
                     if len(self._result_cache) > 5000:
                         self._result_cache.pop(next(iter(self._result_cache)))
-                
-                # 2. Workflow Manager'a bildir
+
                 new_tasks = self._workflow_manager.task_completed(result)
-                
-                # 3. Yeni açılan görevleri kuyruğa at
+
                 for task in new_tasks:
                     try:
                         self.submit_task(task)
@@ -358,51 +348,104 @@ class Engine:
                 time.sleep(0.1)
 
     def _resource_manager_loop(self):
-        """
-        Resource Manager Loop - Auto-Scaling
-        
-        Sistemi izler ve worker sayısını dinamik olarak ayarlar.
-        """
+        FORCE_LOAD_TH = 10.0  # panic threshold
+        SCALE_OUT_LOAD_TH = 5.0
+        SCALE_IN_LOAD_TH = 1.5
+
+        PRESSURE_HOLD_SEC = 30  # scale-in kilidi
+        SCALE_COOLDOWN_SEC = 20
+
         while not self._shutdown_event.is_set():
             try:
-                time.sleep(5.0)  # 5 saniyede bir kontrol et
-                
+                time.sleep(5.0)
+
                 if not self._process_pool:
                     continue
-                    
-                # Metrikleri al
-                # InputQueue boyutu + Worker'lardaki aktif işler
-                input_queue_size = self._input_queue.size()
-                
-                # ProcessPool status'undan aktif iş sayısını al
+
                 pool_status = self._process_pool.get_status()
-                active_tasks = pool_status.metrics.get('cpu_active_threads', 0)
-                
-                total_load = input_queue_size + active_tasks
+                metrics = getattr(pool_status, "metrics", {}) or {}
+                cpu_worker_tasks = metrics.get("cpu_worker_tasks", {})
+
                 cpu_worker_count = self._process_pool.get_worker_count(TaskType.CPU_BOUND)
-                
-                # Basit Scaling Algoritması
-                # Hedef: Her worker başına en fazla 5 aktif iş olsun
-                
-                if total_load > cpu_worker_count * 5:
-                    # Scale Out (Büyüme)
-                    # Max limit: 2 * CPU Core
-                    max_workers = multiprocessing.cpu_count() * 2
-                    
+                if cpu_worker_count == 0 or not cpu_worker_tasks:
+                    continue
+
+                loads = []
+                cpu_usages = []
+
+                for w_metrics in cpu_worker_tasks.values():
+                    loads.append(w_metrics.get("total_load", 0))
+                    cpu_usages.append(w_metrics.get("cpu_usage", 0.0) / 100.0)
+
+                avg_load = sum(loads) / cpu_worker_count
+                max_load = max(loads)
+                loads_sorted = sorted(loads)
+                p75_load = loads_sorted[int(len(loads_sorted) * 0.75)]
+                avg_cpu = sum(cpu_usages) / len(cpu_usages)
+
+                now = time.time()
+
+                # --------------------------------------------------
+                # PRESSURE DETECTION (PANIC MODE)
+                # --------------------------------------------------
+                if max_load >= FORCE_LOAD_TH:
+                    self._autoscale_mode = "PRESSURE"
+                    self._pressure_until = now + PRESSURE_HOLD_SEC
+
+                # PRESSURE MODE EXIT
+                if self._autoscale_mode == "PRESSURE" and now >= self._pressure_until:
+                    self._autoscale_mode = "COOLDOWN"
+                    self._last_scale_time = now
+
+                # COOLDOWN EXIT
+                if self._autoscale_mode == "COOLDOWN" and now - self._last_scale_time >= SCALE_COOLDOWN_SEC:
+                    self._autoscale_mode = "NORMAL"
+
+                # --------------------------------------------------
+                # SCALE DECISIONS
+                # --------------------------------------------------
+                if now - self._last_scale_time < SCALE_COOLDOWN_SEC:
+                    continue
+
+                max_workers = multiprocessing.cpu_count() * 2
+
+                # -------- SCALE OUT --------
+                if self._autoscale_mode == "PRESSURE":
                     if cpu_worker_count < max_workers:
-                        self._logger.info(f"Auto-Scaling: Yük arttı ({total_load} iş), yeni worker ekleniyor...")
+                        self._logger.warning(
+                            f"[PRESSURE] Force Scale OUT | max_load={max_load:.1f}"
+                        )
                         self._process_pool.add_worker(TaskType.CPU_BOUND)
-                        
-                elif total_load < cpu_worker_count * 2 and cpu_worker_count > self._config.cpu_bound_count:
-                    # Scale In (Küçülme)
-                    # Min limit: Config'deki başlangıç sayısı
-                    self._logger.info(f"Auto-Scaling: Yük azaldı ({total_load} iş), worker kapatılıyor...")
+                        self._last_scale_time = now
+                    continue
+
+                if self._autoscale_mode == "NORMAL":
+                    if p75_load > SCALE_OUT_LOAD_TH and avg_cpu > 0.70:
+                        if cpu_worker_count < max_workers:
+                            self._logger.info(
+                                f"Scale OUT | p75_load={p75_load:.1f}, avg_cpu={avg_cpu:.2f}"
+                            )
+                            self._process_pool.add_worker(TaskType.CPU_BOUND)
+                            self._last_scale_time = now
+                    continue
+
+                # -------- SCALE IN (SADECE NORMAL) --------
+                if (
+                        self._autoscale_mode == "NORMAL"
+                        and avg_load < SCALE_IN_LOAD_TH
+                        and avg_cpu < 0.40
+                        and cpu_worker_count > self._config.cpu_bound_count
+                ):
+                    self._logger.info(
+                        f"Scale IN | avg_load={avg_load:.1f}, avg_cpu={avg_cpu:.2f}"
+                    )
                     self._process_pool.remove_worker(TaskType.CPU_BOUND)
-                    
+                    self._last_scale_time = now
+
             except Exception as e:
                 self._logger.error(f"Resource manager hatası: {e}")
                 time.sleep(5.0)
-    
+
     def get_status(self) -> Dict[str, Any]:
         """Engine durumu"""
         status = {

@@ -16,7 +16,7 @@ from typing import List, Optional, Callable, Any
 from threading import Lock, Thread, Event
 import time
 
-from ..core.enums import TaskType
+from ..core.enums import TaskType, ProcessMetric
 from ..status import ComponentStatus
 from .process import WorkerProcess
 
@@ -128,71 +128,72 @@ class ProcessPool:
         
         self._started = True
         return True
-    
+
     def submit_task(self, task: Any, task_type: TaskType) -> bool:
-        """
-        Görev gönderir (load balancing ile)
-        
-        Görev tipine göre uygun worker listesini seçer ve
-        en az yüklü worker'a gönderir.
-        
-        Args:
-            task: Gönderilecek görev
-            task_type: Görev tipi (CPU_BOUND veya IO_BOUND)
-        
-        Returns:
-            bool: True ise başarılı, False ise başarısız
-        """
         if not self._started:
             return False
-        
-        # Uygun worker listesini seç: CPU veya IO
-        if task_type == TaskType.CPU_BOUND:
-            workers = self._cpu_workers
-        else:
-            workers = self._io_workers
-        
+
+        workers = (
+            self._cpu_workers
+            if task_type == TaskType.CPU_BOUND
+            else self._io_workers
+        )
+
         if not workers:
-            return False  # Worker yok
-        
-        # Load balancing: En az yüklü worker'ı bul
-        # active_thread_count() ile worker'ın aktif thread sayısını alır
-        # best_worker = min(workers, key=lambda w: w.active_thread_count())
-        
-        # Work Stealing Modunda:
-        # Görevi rastgele veya Round-Robin bir kuyruğa atarız.
-        # Worker'lar zaten boş kalınca diğerlerinden çalacak.
-        # Basitlik için: En az işi olan worker'ın kuyruğuna atalım (Push-based balancing)
-        
-        best_worker_idx = 0
-        min_load = float('inf')
-        
+            return False
+
+        best_worker_idx = None
+        best_score = float("inf")
+
         for i, worker in enumerate(workers):
-            active_tasks, queue_size = worker.active_thread_count()
-            load = active_tasks + queue_size
-            if load < min_load:
-                min_load = load
+            active_threads, process_queue_size, thread_queue_size = worker.active_thread_count()
+
+            metrics = worker.process_metrics
+            cpu_usage = metrics[ProcessMetric.CPU]
+
+            # ---- LOAD COMPONENTS ----
+            thread_load = active_threads + thread_queue_size
+            process_load = process_queue_size
+            cpu_norm = cpu_usage / 100.0
+
+            # ---- SCORE ----
+            if task_type == TaskType.CPU_BOUND:
+                # CPU işleri: thread saturation kritik
+                score = (
+                        process_load * 0.6 +
+                        thread_load * 1.2 +
+                        cpu_norm * 0.05
+                )
+            else:
+                # IO işleri: queue doluluğu kritik
+                score = (
+                        process_load * 1.0 +
+                        thread_load * 0.8 +
+                        cpu_norm * 0.02
+                )
+
+            if score < best_score:
+                best_score = score
                 best_worker_idx = i
-                
-        # Seçilen worker'ın kuyruğuna at
-        if task_type == TaskType.CPU_BOUND:
-            target_queue = self._cpu_queues[best_worker_idx]
-        else:
-            target_queue = self._io_queues[best_worker_idx]
-            
-        # Görevi kuyruğa at (Dict olarak)
-        task_data = task.to_dict() if hasattr(task, 'to_dict') else task
-        
-        # WorkerProcess artık Pipe yerine Queue dinliyor.
-        # Ancak WorkerProcess içinde "execute_task" komutu bekleyen bir yapı var.
-        # O yapıyı değiştirmemiz lazım.
-        # Şimdilik uyumluluk için:
+
+        if best_worker_idx is None:
+            return False
+
+        target_queue = (
+            self._cpu_queues[best_worker_idx]
+            if task_type == TaskType.CPU_BOUND
+            else self._io_queues[best_worker_idx]
+        )
+
+        task_data = task.to_dict() if hasattr(task, "to_dict") else task
+
         target_queue.put({
             "command": "execute_task",
             "task": task_data
         })
+
         return True
-    
+
     def shutdown(self):
         """Pool'u kapat"""
         self._shutdown_event.set()
@@ -352,12 +353,11 @@ class ProcessPool:
         cpu_worker_tasks = {}
         for i, worker in enumerate(self._cpu_workers):
             worker_id = worker._worker_id
-            active_tasks, queue_size = worker.active_thread_count()
+            active_tasks, queue_size, thread_pool_queue_size = worker.active_thread_count()
             try:
                 queue_size = self._cpu_queues[i].qsize() if i < len(self._cpu_queues) else 0
             except:
                 queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
-            thread_pool_queue_size = worker.thread_pool_queue_size()
             cpu_worker_tasks[worker_id] = {
                 "active_tasks": active_tasks,
                 "queue_size": queue_size,
@@ -368,12 +368,11 @@ class ProcessPool:
         io_worker_tasks = {}
         for i, worker in enumerate(self._io_workers):
             worker_id = worker._worker_id
-            active_tasks, queue_size = worker.active_thread_count()
+            active_tasks, queue_size, thread_pool_queue_size = worker.active_thread_count()
             try:
                 queue_size = self._io_queues[i].qsize() if i < len(self._io_queues) else 0
             except:
                 queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
-            thread_pool_queue_size = worker.thread_pool_queue_size()
             io_worker_tasks[worker_id] = {
                 "active_tasks": active_tasks,
                 "queue_size": queue_size,

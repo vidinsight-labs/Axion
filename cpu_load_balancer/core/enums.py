@@ -6,7 +6,7 @@ Bu modül, sistemde kullanılan enum'ları içerir:
 - TaskStatus: Görev durumu (PENDING, RUNNING, COMPLETED, FAILED, CANCELLED)
 """
 
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class TaskType(Enum):
@@ -40,3 +40,8 @@ class TaskStatus(Enum):
     COMPLETED = "completed"  # Tamamlandı
     FAILED = "failed"        # Başarısız
     CANCELLED = "cancelled"  # İptal edildi
+
+
+class ProcessMetric(IntEnum):
+    CPU = 0
+    MEM = 1
