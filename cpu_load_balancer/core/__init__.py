@@ -1,6 +1,6 @@
 """Core modül - temel sınıflar"""
 
-from .enums import TaskType, TaskStatus
+from .enums import TaskType, TaskStatus, ProcessMetric
 from .exceptions import (
     EngineError,
     TaskError,
@@ -19,5 +19,6 @@ __all__ = [
     'ConfigError',
     'ExecutorError',
     'WorkerError',
+    'ProcessMetric',
 ]
 
