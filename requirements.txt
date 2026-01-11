@@ -1,23 +1,67 @@
-# CPU Load Balancer v3 - Requirements
+# Axion v3.0 - Requirements
+# ==========================
 #
-# Bu proje temel olarak Python standard library kullanır.
-# I/O-bound benchmark testleri için harici bağımlılık gereklidir.
+# Axion, yüksek performanslı task execution engine'idir.
+# CPU-bound ve IO-bound görevleri optimize eder, otomatik ölçeklendirme yapar.
 #
 # Minimum Python versiyonu: 3.8+
 # Test edilen versiyonlar: 3.8, 3.9, 3.10, 3.11, 3.12
+#
+# Kurulum:
+#   pip install -r requirements.txt
+#
+# Sadece temel kullanım için:
+#   pip install psutil
+#
+# Tüm özellikler için (benchmark testleri dahil):
+#   pip install -r requirements.txt
 
-# Python versiyonu kontrolü için (opsiyonel)
-# python_requires = >=3.8
+# ============================================================================
+# CORE DEPENDENCIES (Zorunlu)
+# ============================================================================
 
-# I/O-bound benchmark testleri için (opsiyonel)
-# Sadece io_bound_performance_test.py çalıştırılacaksa gereklidir
+# psutil: Sistem kaynaklarını izlemek için (CPU, memory, process monitoring)
+# Backpressure controller ve worker process monitoring için gerekli
+psutil>=5.9.0
+
+# ============================================================================
+# OPTIONAL DEPENDENCIES (Benchmark ve Test Script'leri için)
+# ============================================================================
+
+# requests: Network I/O benchmark testleri için
+# Sadece benchmarks/test_scripts/network_io_task.py kullanılacaksa gereklidir
+# Gerçek projelerde network işlemleri için kendi HTTP kütüphanenizi kullanabilirsiniz
 requests>=2.31.0
 
-# Geliştirme bağımlılıkları (opsiyonel)
-# Bu bağımlılıklar sadece test ve geliştirme için gereklidir
-# pytest>=7.0.0
-# pytest-cov>=4.0.0
-# black>=23.0.0
-# flake8>=6.0.0
-# mypy>=1.0.0
+# ============================================================================
+# DEVELOPMENT DEPENDENCIES (Opsiyonel)
+# ============================================================================
+# Bu bağımlılıklar sadece geliştirme ve test için gereklidir
+# Kurulum: pip install -r requirements-dev.txt
+
+# pytest>=7.0.0          # Test framework
+# pytest-cov>=4.0.0       # Test coverage
+# black>=23.0.0           # Code formatter
+# flake8>=6.0.0           # Linter
+# mypy>=1.0.0             # Type checker
+
+# ============================================================================
+# NOTLAR
+# ============================================================================
+#
+# 1. Temel Kullanım:
+#    - Sadece psutil yeterlidir
+#    - Axion core functionality için yeterli
+#
+# 2. Benchmark Testleri:
+#    - requests ekleyin (network I/O testleri için)
+#    - sqlite3 standart kütüphanede var, eklemeye gerek yok
+#
+# 3. Production Kullanımı:
+#    - psutil zorunlu (backpressure ve monitoring için)
+#    - requests opsiyonel (kendi HTTP kütüphanenizi kullanabilirsiniz)
+#
+# 4. Integration Guide:
+#    - docs/integration_guide.md dosyasına bakın
+#    - Gerçek hayat senaryoları ve entegrasyon örnekleri
 
