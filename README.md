@@ -20,7 +20,8 @@ CPU-bound ve IO-bound görevleri optimize eden, her component'in durumunu takip 
 ### Gereksinimler
 
 - Python 3.8 veya üzeri
-- Harici bağımlılık yok (sadece Python standard library kullanılır)
+- **psutil>=5.9.0** (sistem kaynaklarını izlemek için - zorunlu)
+- **requests>=2.31.0** (sadece network I/O benchmark testleri için - opsiyonel)
 
 ### Kurulum
 
@@ -34,8 +35,8 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # Projeyi kur (editable mode)
 pip install -e .
 
-# Veya sadece kullanmak için (bağımlılık yok)
-# Hiçbir şey kurmaya gerek yok, direkt kullanabilirsiniz
+# Bağımlılıkları kur
+pip install -r requirements.txt
 ```
 
 ### Geliştirme Bağımlılıkları (Opsiyonel)

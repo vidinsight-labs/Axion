@@ -1,24 +1,56 @@
-# CPU Load Balancer v3 - Development Requirements
+# Axion v3.0 - Development Requirements
+# ======================================
 #
-# Geliştirme ve test için gerekli bağımlılıklar
+# Geliştirme, test ve benchmark için gerekli bağımlılıklar
+#
+# Kurulum:
+#   pip install -r requirements-dev.txt
+#
+# Not: Bu dosya requirements.txt'deki tüm bağımlılıkları içerir
+#      + geliştirme araçları
 
-# Test framework
-pytest>=7.0.0
-pytest-cov>=4.0.0
+# ============================================================================
+# CORE DEPENDENCIES (requirements.txt'den)
+# ============================================================================
 
-# I/O-bound benchmark testleri için
+# psutil: Sistem kaynaklarını izlemek için (zorunlu)
+psutil>=5.9.0
+
+# requests: Network I/O benchmark testleri için
 requests>=2.31.0
 
-# Code formatting
+# ============================================================================
+# TEST FRAMEWORK
+# ============================================================================
+
+# pytest: Test framework
+pytest>=7.0.0
+
+# pytest-cov: Test coverage raporları
+pytest-cov>=4.0.0
+
+# ============================================================================
+# CODE QUALITY TOOLS
+# ============================================================================
+
+# black: Code formatter (PEP 8 uyumlu)
 black>=23.0.0
 
-# Linting
+# flake8: Linter (kod kalitesi kontrolü)
 flake8>=6.0.0
 
-# Type checking
+# mypy: Static type checker
 mypy>=1.0.0
 
-# Documentation (opsiyonel)
+# ============================================================================
+# OPTIONAL DEVELOPMENT TOOLS
+# ============================================================================
+
+# Documentation generation (opsiyonel)
 # sphinx>=5.0.0
 # sphinx-rtd-theme>=1.0.0
+
+# Profiling tools (opsiyonel)
+# py-spy>=0.3.0
+# memory-profiler>=0.60.0
 
