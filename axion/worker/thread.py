@@ -73,10 +73,6 @@ class ThreadPool:
         if self._thread_pool_queue_size is not None:
             with self._thread_pool_queue_size.get_lock():
                 self._thread_pool_queue_size.value = self._task_queue.qsize()
-        # Shared counter'ı güncelle
-        if self._thread_pool_queue_size is not None:
-            with self._thread_pool_queue_size.get_lock():
-                self._thread_pool_queue_size.value = self._task_queue.qsize()
     
     def queue_size(self) -> int:
         """ThreadPool queue'sundaki görev sayısı"""

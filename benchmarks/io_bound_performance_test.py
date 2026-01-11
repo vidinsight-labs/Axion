@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # Proje root'unu path'e ekle
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cpu_load_balancer import Engine, EngineConfig, Task, TaskType
+from axion import Engine, EngineConfig, Task, TaskType
 
 
 @dataclass
@@ -130,9 +130,8 @@ def run_io_bound_test(
     submit_time = time.time() - start_time
     print(f"   ✅ Gönderim tamamlandı ({submit_time:.3f} saniye)")
     
-    # Görevlerin worker'lara dağılması için kısa bir bekleme
-    print(f"   ⏳ Görevlerin worker'lara dağılması bekleniyor...")
-    time.sleep(0.5)
+    # Görevlerin worker'lara dağılması için kısa bir bekleme (azaltıldı)
+    # time.sleep(0.5) kaldırıldı - gereksiz gecikme
     
     # Sonuçları al
     print(f"\n⏳ Sonuçlar bekleniyor...")
@@ -220,8 +219,14 @@ def run_io_bound_test(
 
 
 def run_file_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkResult]:
-    engine.shutdown()
     """File I/O benchmark testleri"""
+    # Gelen engine'i kapat ve yeni config'lerle başlat
+    if engine:
+        try:
+            engine.shutdown()
+        except:
+            pass
+    
     results = []
     
     cpu_count = multiprocessing.cpu_count()
@@ -237,7 +242,8 @@ def run_file_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkR
     for num_workers in worker_configs:
         for test_config in test_configs:
             
-            time.sleep(1.0)
+            # Gereksiz sleep kaldırıldı - sadece engine başlatma sonrası minimal bekleme
+            # time.sleep(1.0) kaldırıldı
             
             config = EngineConfig(
                 cpu_bound_count=1,
@@ -250,7 +256,8 @@ def run_file_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkR
             engine = Engine(config)
             engine.start()
             
-            time.sleep(0.5)
+            # Engine'in başlaması için minimal bekleme (azaltıldı)
+            time.sleep(0.1)  # 0.5'ten 0.1'e düşürüldü
             
             test_params = {
                 "operation": test_config["operation"],
@@ -276,8 +283,14 @@ def run_file_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkR
 
 
 def run_network_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkResult]:
-    engine.shutdown()
     """Network I/O benchmark testleri (Gerçek HTTP istekleri)"""
+    # Gelen engine'i kapat ve yeni config'lerle başlat
+    if engine:
+        try:
+            engine.shutdown()
+        except:
+            pass
+    
     results = []
     
     cpu_count = multiprocessing.cpu_count()
@@ -314,7 +327,8 @@ def run_network_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchma
     for num_workers in worker_configs:
         for test_config in test_configs:
             
-            time.sleep(1.0)
+            # Gereksiz sleep kaldırıldı
+            # time.sleep(1.0) kaldırıldı
             
             config = EngineConfig(
                 cpu_bound_count=1,
@@ -327,7 +341,8 @@ def run_network_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchma
             engine = Engine(config)
             engine.start()
             
-            time.sleep(0.5)
+            # Engine'in başlaması için minimal bekleme (azaltıldı)
+            time.sleep(0.1)  # 0.5'ten 0.1'e düşürüldü
             
             test_params = {
                 "urls": test_config["urls"],
@@ -352,8 +367,14 @@ def run_network_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchma
 
 
 def run_database_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchmarkResult]:
-    engine.shutdown()
     """Database I/O benchmark testleri (Gerçek SQLite işlemleri)"""
+    # Gelen engine'i kapat ve yeni config'lerle başlat
+    if engine:
+        try:
+            engine.shutdown()
+        except:
+            pass
+    
     results = []
     
     cpu_count = multiprocessing.cpu_count()
@@ -381,7 +402,8 @@ def run_database_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchm
     for num_workers in worker_configs:
         for test_config in test_configs:
             
-            time.sleep(1.0)
+            # Gereksiz sleep kaldırıldı
+            # time.sleep(1.0) kaldırıldı
             
             config = EngineConfig(
                 cpu_bound_count=1,
@@ -394,7 +416,8 @@ def run_database_io_benchmark(engine: Engine, script_path: str) -> List[IOBenchm
             engine = Engine(config)
             engine.start()
             
-            time.sleep(0.5)
+            # Engine'in başlaması için minimal bekleme (azaltıldı)
+            time.sleep(0.1)  # 0.5'ten 0.1'e düşürüldü
             
             test_params = {
                 "query_type": test_config["query_type"],

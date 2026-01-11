@@ -57,8 +57,8 @@ def main(params, context):
                         chunk = b"X" * min(chunk_size, file_size_bytes - written)
                         f.write(chunk)
                         written += len(chunk)
-                        # I/O blocking simülasyonu
-                        time.sleep(0.001)  # 1ms I/O wait
+                        # Gerçek I/O zaten blocking, yapay sleep'e gerek yok
+                        # time.sleep(0.001) kaldırıldı - performans için
                 
                 total_bytes += file_size_bytes
                 files_processed += 1
@@ -76,8 +76,8 @@ def main(params, context):
                             if not chunk:
                                 break
                             read_bytes += len(chunk)
-                            # I/O blocking simülasyonu
-                            time.sleep(0.001)  # 1ms I/O wait
+                            # Gerçek I/O zaten blocking, yapay sleep'e gerek yok
+                            # time.sleep(0.001) kaldırıldı - performans için
                     
                     total_bytes += read_bytes
                     files_processed += 1

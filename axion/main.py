@@ -24,7 +24,7 @@ from .core.enums import TaskType
 from .core.exceptions import EngineError, TaskError
 
 
-class CPULoadBalancerApp:
+class Axion:
     """Ana uygulama sınıfı"""
     
     def __init__(self, config: Optional[EngineConfig] = None):
@@ -370,7 +370,7 @@ def main():
         config.log_level = args.log_level
     
     # Uygulamayı başlat
-    app = CPULoadBalancerApp(config)
+    app = Axion(config)
     
     if not app.start():
         return 1

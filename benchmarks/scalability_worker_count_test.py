@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 # Proje root'unu path'e ekle
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cpu_load_balancer import Engine, EngineConfig, Task, TaskType
+from axion import Engine, EngineConfig, Task, TaskType
 
 
 @dataclass

@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from cpu_load_balancer import Engine
+from axion import Engine
 
 print("Starting engine...")
 try:
