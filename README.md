@@ -51,7 +51,7 @@ pip install -r requirements-dev.txt
 ### Basit Kullanım
 
 ```python
-from cpu_load_balancer import Engine, Task, TaskType
+from axion import Engine, Task, TaskType
 
 # Engine oluştur ve başlat
 engine = Engine()
@@ -82,7 +82,7 @@ engine.shutdown()
 ### Context Manager ile Kullanım
 
 ```python
-from cpu_load_balancer import Engine, Task, TaskType
+from axion import Engine, Task, TaskType
 
 with Engine() as engine:
     task = Task(
@@ -90,10 +90,10 @@ with Engine() as engine:
         params={"value": 10},
         task_type=TaskType.IO_BOUND
     )
-    
+
     task_id = engine.submit_task(task)
     result = engine.get_result(task_id, timeout=30)
-    
+
     if result:
         print(f"Sonuç: {result.data}")
 ```
@@ -101,7 +101,7 @@ with Engine() as engine:
 ### Sistem Durumunu İzleme
 
 ```python
-from cpu_load_balancer import Engine
+from axion import Engine
 
 engine = Engine()
 engine.start()
@@ -225,7 +225,7 @@ class MyModule:
 ### EngineConfig
 
 ```python
-from cpu_load_balancer import Engine, EngineConfig
+from axion import Engine, EngineConfig
 
 # Varsayılan config
 engine = Engine()

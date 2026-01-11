@@ -1,657 +1,755 @@
-# CPU Load Balancer - Mimari Dokümantasyon
+# Axion - Mimari Dokümantasyon
 
-Bu dokümantasyon, CPU Load Balancer modülünün mimarisini, parçalarını, girdi/çıktı akışını ve takip mekanizmalarını detaylı olarak açıklar.
+**Axion v3.0** - Detaylı Mimari Analizi
 
-## İçindekiler
+Bu dokümantasyon, Axion'un mimari yapısını, bileşenlerini ve çalışma prensiplerini detaylı olarak açıklar.
 
-1. [Modül Yapısı](#modül-yapısı)
-2. [Ana Bileşenler](#ana-bileşenler)
-3. [Girdi Akışı (Input Flow)](#girdi-akışı)
-4. [Çıktı Akışı (Output Flow)](#çıktı-akışı)
-5. [Takip ve İzleme](#takip-ve-izleme)
-6. [Veri Yapıları](#veri-yapıları)
+## 📑 İçindekiler
 
----
-
-## Modül Yapısı
-
-```
-cpu_load_balancer/
-├── engine/              # Ana motor
-│   └── engine.py       # Engine sınıfı (merkezi kontrol)
-├── config/              # Yapılandırma
-│   └── __init__.py      # EngineConfig
-├── task/                # Görev tanımları
-│   ├── task.py          # Task sınıfı
-│   └── result.py        # Result sınıfı
-├── queue/               # Kuyruklar
-│   ├── input_queue.py  # Girdi kuyruğu
-│   └── output_queue.py # Çıktı kuyruğu
-├── worker/              # İşçi süreçleri
-│   ├── pool.py          # ProcessPool (yönetim)
-│   ├── process.py       # WorkerProcess (süreç)
-│   └── thread.py        # ThreadPool (thread yönetimi)
-├── executer/            # Çalıştırıcılar
-│   └── python_executor.py # Python script executor
-├── core/                # Temel sınıflar
-│   ├── enums.py         # TaskType, TaskStatus
-│   └── exceptions.py    # Hata sınıfları
-└── status.py            # Durum takibi
-```
+1. [Sistem Mimarisi](#sistem-mimarisi)
+2. [Temel Bileşenler](#temel-bileşenler)
+3. [Auto-Scaling Mekanizması](#auto-scaling-mekanizması)
+4. [Workflow Yönetimi](#workflow-yönetimi)
+5. [Work Stealing Algoritması](#work-stealing-algoritması)
+6. [Load Balancing](#load-balancing)
+7. [Queue Yönetimi](#queue-yönetimi)
+8. [Process İletişimi](#process-iletişimi)
 
 ---
 
-## Ana Bileşenler
+## 🏗️ Sistem Mimarisi
 
-### 1. Engine (Ana Motor)
+### Genel Yapı
 
-**Dosya:** `engine/engine.py`
+```
+┌─────────────────────────────────────────────────────────┐
+│                        ENGINE                            │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Resource Manager (Auto-Scaling)                   │ │
+│  │  - Queue-aware scaling                             │ │
+│  │  - Velocity-based prediction                       │ │
+│  │  - Worker warm-up tracking                         │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                          │
+│  ┌────────────┐    ┌────────────┐    ┌──────────────┐  │
+│  │InputQueue  │ →  │QueueThread │ →  │ProcessPool   │  │
+│  │(Tasks)     │    │            │    │(Dispatch)    │  │
+│  └────────────┘    └────────────┘    └──────┬───────┘  │
+│                                               │          │
+│  ┌────────────┐    ┌────────────┐            │          │
+│  │OutputQueue │ ←  │ResultThread│            │          │
+│  │(Results)   │    │            │            │          │
+│  └────────────┘    └────────────┘            │          │
+│                                               │          │
+│  ┌────────────────────────────────────────┐  │          │
+│  │  Workflow Manager (DAG)                │  │          │
+│  │  - Dependency tracking                 │  │          │
+│  │  - Task chaining                       │  │          │
+│  │  - Data passing                        │  │          │
+│  └────────────────────────────────────────┘  │          │
+│                                               │          │
+│  ┌────────────────────────────────────────┐  │          │
+│  │  Backpressure Controller               │  │          │
+│  │  - CPU monitoring (psutil)             │  │          │
+│  │  - Memory monitoring                   │  │          │
+│  │  - Task rejection policy               │  │          │
+│  └────────────────────────────────────────┘  │          │
+└──────────────────────────────────────────────┼──────────┘
+                                               │
+                     ┌─────────────────────────┘
+                     │
+        ┌────────────┴──────────────┐
+        │                           │
+   ┌────▼──────┐             ┌──────▼────┐
+   │ CPU POOL  │             │  IO POOL  │
+   └───────────┘             └───────────┘
+        │                           │
+   ┌────┴────┐                 ┌────┴────┐
+   │ Queue 0 │                 │ Queue 0 │
+   │ Queue 1 │                 │ Queue 1 │
+   │ Queue 2 │                 │ Queue 2 │
+   │ Queue 3 │                 │ Queue 3 │
+   └────┬────┘                 └────┬────┘
+        │                           │
+   ┌────▼────────┐             ┌────▼────────┐
+   │ Worker 0    │             │ Worker 0    │
+   │ ┌─────────┐ │             │ ┌─────────┐ │
+   │ │Thread 1 │ │             │ │Thread 1 │ │
+   │ └─────────┘ │             │ │Thread 2 │ │
+   │ CPU Affinity│             │ │ ...     │ │
+   │ Nice: 0     │             │ │Thread 20│ │
+   └─────────────┘             │ Nice: 5   │
+                               └───────────┘
+        │                           │
+        │                           │
+   ┌────▼────────┐             ┌────▼────────┐
+   │PythonExecutor              │PythonExecutor│
+   │ - Module cache            │ - Module cache│
+   │ - Script execution        │ - Script exec│
+   └─────────────┘             └─────────────┘
+```
 
-**Sorumluluklar:**
-- Sistemin merkezi kontrol noktası
-- Görev gönderme (`submit_task`)
-- Sonuç alma (`get_result`)
-- Sistem durumu (`get_status`)
-- Queue işleme thread'i yönetimi
+### Katmanlar
 
-**Önemli Özellikler:**
-- Result cache (batch işlemler için)
-- Pending tasks takibi
-- Graceful shutdown
-
-### 2. Config (Yapılandırma)
-
-**Dosya:** `config/__init__.py`
-
-**Sorumluluklar:**
-- Tüm sistem ayarlarını içerir
-- Worker sayıları
-- Queue boyutları
-- Timeout değerleri
-
-### 3. Queue'lar
-
-**InputQueue** (`queue/input_queue.py`):
-- Görevlerin gönderildiği kuyruk
-- Multiprocessing.Queue kullanır
-- Non-blocking put/get
-
-**OutputQueue** (`queue/output_queue.py`):
-- Sonuçların toplandığı kuyruk
-- Multiprocessing.Queue kullanır
-- Blocking get (timeout ile)
-
-### 4. Worker Pool
-
-**ProcessPool** (`worker/pool.py`):
-- CPU-bound ve IO-bound worker'ları yönetir
-- Load balancing yapar
-- En az yüklü worker'ı seçer
-
-**WorkerProcess** (`worker/process.py`):
-- Tek bir worker process'i
-- ThreadPool'u yönetir
-- Process içi iletişim (Pipe)
-
-**ThreadPool** (`worker/thread.py`):
-- Worker process içinde thread yönetimi
-- Görevleri thread'lere dağıtır
-- Executor'ı çağırır
-
-### 5. Executor
-
-**PythonExecutor** (`executer/python_executor.py`):
-- Python script'lerini çalıştırır
-- `main(params, context)` fonksiyonunu arar
-- Module cache kullanır
-
-### 6. Task & Result
-
-**Task** (`task/task.py`):
-- Görev tanımı
-- Script path, parametreler, tip
-- Dict'e dönüştürülebilir (queue için)
-
-**Result** (`task/result.py`):
-- Görev sonucu
-- Başarılı/başarısız durum
-- Hata bilgileri
-- Dict'e dönüştürülebilir (queue için)
+1. **Engine Layer**: Merkezi kontrol, resource management, workflow yönetimi
+2. **Pool Layer**: Worker yönetimi, load balancing, work stealing
+3. **Process Layer**: Individual worker processes, CPU affinity, nice level
+4. **Thread Layer**: Thread pool management, task execution
+5. **Executor Layer**: Script execution, module caching
 
 ---
 
-## Girdi Akışı (Input Flow)
+## 🔧 Temel Bileşenler
 
-### Adım Adım Akış
+### 1. Engine (Merkezi Kontrol)
 
-```
-1. Kullanıcı
-   │
-   ├─► Task.create(script_path, params, task_type)
-   │       │
-   │       ▼
-   │   Task objesi oluşturulur
-   │   - id: UUID
-   │   - script_path: "/path/to/script.py"
-   │   - params: {"value": 42}
-   │   - task_type: TaskType.IO_BOUND
-   │
-   ├─► Engine.submit_task(task)
-   │       │
-   │       ├─► InputQueue.put(task.to_dict())
-   │       │       │
-   │       │       ▼
-   │       │   Queue'ya eklenir (multiprocessing.Queue)
-   │       │
-   │       └─► _pending_tasks[task.id] = task
-   │               │
-   │               ▼
-   │           Pending listesine eklenir (takip için)
-   │
-   └─► task_id döndürülür
-```
+**Dosya**: `axion/engine/engine.py`
 
-### Detaylı Akış
+**Sorumluluklar**:
+- ✅ Task submission ve result retrieval
+- ✅ Queue processing coordination
+- ✅ Auto-scaling orchestration
+- ✅ Workflow management
+- ✅ System health monitoring
 
-#### 1. Görev Oluşturma
+**Önemli Thread'ler**:
 
 ```python
-task = Task.create(
-    script_path="my_script.py",
-    params={"value": 42},
-    task_type=TaskType.IO_BOUND
-)
+# Queue Processing Thread
+def _process_queue_loop(self):
+    """InputQueue'dan görev alır, ProcessPool'a gönderir"""
+    while not shutdown:
+        task = input_queue.get()
+        process_pool.submit_task(task)
+
+# Result Processing Thread
+def _process_result_loop(self):
+    """OutputQueue'dan sonuç alır, cache'e kaydeder, workflow'ları tetikler"""
+    while not shutdown:
+        result = output_queue.get()
+        result_cache[result.task_id] = result
+        new_tasks = workflow_manager.task_completed(result)
+        for task in new_tasks:
+            submit_task(task)
+
+# Resource Manager Thread
+def _resource_manager_loop(self):
+    """Auto-scaling: Queue, load, velocity metriklerine göre worker ekler/çıkarır"""
+    while not shutdown:
+        analyze_metrics()
+        make_scaling_decision()
+        add_or_remove_workers()
 ```
 
-**Ne Olur:**
-- Task objesi oluşturulur
-- UUID ile benzersiz ID atanır
-- Varsayılan değerler ayarlanır
+### 2. ProcessPool (Worker Yönetimi)
 
-#### 2. Görev Gönderme
+**Dosya**: `axion/worker/pool.py`
+
+**Sorumluluklar**:
+- ✅ CPU ve IO worker'ları ayrı havuzlarda yönetir
+- ✅ Sharded queues (her worker'ın kendi queue'su)
+- ✅ Load-based task distribution
+- ✅ Dynamic worker ekleme/çıkarma
+- ✅ Worker metrics collection
+
+**Özellikler**:
 
 ```python
-task_id = engine.submit_task(task)
-```
-
-**Ne Olur:**
-1. Task → Dict'e dönüştürülür (`task.to_dict()`)
-2. InputQueue'ya eklenir (`input_queue.put()`)
-3. Pending listesine eklenir (`_pending_tasks[task.id] = task`)
-4. Task ID döndürülür
-
-#### 3. Queue İşleme
-
-```python
-# _process_queue_loop() thread'i sürekli çalışır
-while not shutdown:
-    task_dict = input_queue.get(timeout=1.0)
-    task = Task.from_dict(task_dict)
-    process_pool.submit_task(task, task.task_type)
-```
-
-**Ne Olur:**
-1. Queue'dan görev alınır
-2. Task objesi oluşturulur
-3. ProcessPool'a gönderilir
-
-#### 4. Load Balancing
-
-```python
-# ProcessPool.submit_task()
-if task_type == CPU_BOUND:
-    workers = cpu_workers
-else:
-    workers = io_workers
-
-best_worker = min(workers, key=lambda w: w.active_thread_count())
-best_worker.submit_task(task)
-```
-
-**Ne Olur:**
-1. Görev tipine göre worker listesi seçilir
-2. En az yüklü worker bulunur
-3. Görev o worker'a gönderilir
-
-#### 5. Worker İşleme
-
-```python
-# WorkerProcess.submit_task()
-cmd_pipe.send({
-    "command": "execute_task",
-    "task": task.to_dict()
-})
-
-# WorkerProcess içinde
-thread_pool.submit_task(task_dict)
-```
-
-**Ne Olur:**
-1. Görev process içine gönderilir (Pipe ile)
-2. ThreadPool'a eklenir
-3. Thread pool'dan bir thread görevi alır
-
-#### 6. Execution
-
-```python
-# ThreadPool._worker_loop()
-task = Task.from_dict(task_dict)
-context = ExecutionContext(task_id=task.id, worker_id=worker_id)
-result = executor.execute(task, context)
-output_queue.put(result.to_dict())
-```
-
-**Ne Olur:**
-1. Task objesi oluşturulur
-2. ExecutionContext oluşturulur
-3. PythonExecutor script'i çalıştırır
-4. Sonuç OutputQueue'ya eklenir
-
----
-
-## Çıktı Akışı (Output Flow)
-
-### Adım Adım Akış
-
-```
-1. Worker Thread
-   │
-   ├─► PythonExecutor.execute(task, context)
-   │       │
-   │       ├─► Script yüklenir
-   │       ├─► main(params, context) çağrılır
-   │       └─► Sonuç döndürülür
-   │
-   ├─► Result.success(task_id, data)
-   │       │
-   │       ▼
-   │   Result objesi oluşturulur
-   │   - task_id: "uuid"
-   │   - status: TaskStatus.COMPLETED
-   │   - data: {...}
-   │
-   ├─► OutputQueue.put(result.to_dict())
-   │       │
-   │       ▼
-   │   Queue'ya eklenir (multiprocessing.Queue)
-   │
-   └─► Engine.get_result(task_id)
-           │
-           ├─► Result cache'e bak
-           │       │
-           │       └─► Cache'de varsa: Döndür
-           │
-           └─► OutputQueue.get(timeout)
-                   │
-                   ├─► Sonuç gelirse
-                   │       │
-                   │       ├─► Aranan task_id mi?
-   │       │       │
-   │       │       ├─► Evet: Döndür
-   │       │       └─► Hayır: Cache'e kaydet
-   │       │
-   │       └─► Timeout: None döndür
-```
-
-### Detaylı Akış
-
-#### 1. Script Çalıştırma
-
-```python
-# PythonExecutor.execute()
-module = _load_module(script_path)
-data = module.main(task.params, context)
-return Result.success(task_id, data)
-```
-
-**Ne Olur:**
-1. Script modül olarak yüklenir
-2. `main(params, context)` fonksiyonu çağrılır
-3. Sonuç alınır
-4. Result objesi oluşturulur
-
-#### 2. Sonuç Queue'ya Ekleme
-
-```python
-# ThreadPool._worker_loop()
-result = executor.execute(task, context)
-output_queue.put(result.to_dict())
-```
-
-**Ne Olur:**
-1. Result → Dict'e dönüştürülür
-2. OutputQueue'ya eklenir
-3. Queue multiprocessing üzerinden paylaşılır
-
-#### 3. Sonuç Alma
-
-```python
-# Engine.get_result(task_id)
-# 1. Cache'e bak
-if task_id in _result_cache:
-    return _result_cache.pop(task_id)
-
-# 2. Queue'dan al
-while True:
-    item = output_queue.get(timeout=1.0)
-    result = Result.from_dict(item)
+class ProcessPool:
+    # Sharded Queues
+    _cpu_queues = [Queue0, Queue1, Queue2, ...]  # Her worker için ayrı
+    _io_queues = [Queue0, Queue1, Queue2, ...]
     
-    if result.task_id == task_id:
-        return result
-    else:
-        # Başka bir görevin sonucu, cache'e kaydet
-        _result_cache[result.task_id] = result
+    # Workers
+    _cpu_workers = [Worker0, Worker1, Worker2, ...]
+    _io_workers = [Worker0, Worker1, Worker2, ...]
+    
+    # Load Balancing
+    def submit_task(self, task, task_type):
+        workers = cpu_workers if CPU else io_workers
+        
+        # Score hesapla (her worker için)
+        scores = []
+        for worker in workers:
+            active, queue_size, thread_queue = worker.metrics()
+            cpu_usage = worker.cpu_usage
+            
+            if CPU_BOUND:
+                score = queue * 0.6 + threads * 1.2 + cpu * 0.05
+            else:
+                score = queue * 1.0 + threads * 0.8 + cpu * 0.02
+            
+            scores.append(score)
+        
+        # En düşük score'lu worker'a gönder
+        best_worker = min(workers, key=lambda w: score)
+        best_worker.submit(task)
 ```
 
-**Ne Olur:**
-1. Önce cache'e bakılır (batch işlemler için)
-2. Cache'de yoksa queue'dan alınır
-3. Aranan task_id ise döndürülür
-4. Değilse cache'e kaydedilir (başka görev için)
+### 3. WorkerProcess (Individual Worker)
+
+**Dosya**: `axion/worker/process.py`
+
+**Sorumluluklar**:
+- ✅ Process içinde ThreadPool yönetimi
+- ✅ Task queue processing
+- ✅ Work stealing (diğer worker queue'larından çalma)
+- ✅ CPU affinity ve nice level ayarları
+- ✅ Process metrics (psutil)
+
+**Work Stealing Algoritması**:
+
+```python
+def _run_process(my_queue, all_queues, ...):
+    while not shutdown:
+        task = None
+        
+        # 1. Önce kendi queue'dan dene
+        try:
+            task = my_queue.get_nowait()
+        except Empty:
+            pass
+        
+        # 2. Kendi queue boşsa, başkalarından çal
+        if task is None:
+            # En dolu queue'ları bul
+            victim_queues = sorted(all_queues, 
+                                   key=lambda q: q.qsize(), 
+                                   reverse=True)
+            
+            # En dolu olan'dan çal
+            for victim in victim_queues:
+                if victim != my_queue:
+                    try:
+                        task = victim.get_nowait()
+                        break  # Bulduğumuz an dur
+                    except Empty:
+                        continue
+        
+        # 3. İşi çalıştır
+        if task:
+            thread_pool.submit_task(task)
+        else:
+            sleep(0.001)  # Biraz bekle
+```
+
+**Process Optimizations**:
+
+```python
+# CPU Affinity (worker'ı belirli CPU core'a sabitle)
+if cpu_id is not None:
+    os.sched_setaffinity(0, {cpu_id})  # Linux
+
+# Nice Level (process önceliği)
+os.nice(nice_level)
+# nice=0:  CPU-bound (yüksek öncelik)
+# nice=5:  IO-bound (düşük öncelik, CPU'yu bırakır)
+```
+
+### 4. ThreadPool (Thread Yönetimi)
+
+**Dosya**: `axion/worker/thread.py`
+
+**Sorumluluklar**:
+- ✅ Worker process içinde thread pool
+- ✅ Task queue processing
+- ✅ Executor integration
+- ✅ Active task counting
+- ✅ Queue size tracking
+
+```python
+class ThreadPool:
+    def _worker_loop(self):
+        """Her thread bu loop'ta çalışır"""
+        while not shutdown:
+            # Queue'dan görev al
+            task = task_queue.get(timeout=0.1)
+            
+            # Active count'u artır
+            with lock:
+                active_count += 1
+            
+            # Shared counter'ı güncelle (multiprocessing)
+            with active_task_count.get_lock():
+                active_task_count.value += 1
+            
+            try:
+                # Task'ı çalıştır
+                result = executor.execute(task, context)
+                output_queue.put(result)
+            finally:
+                # Count'ları azalt
+                active_count -= 1
+                active_task_count.value -= 1
+```
+
+### 5. Workflow Manager (DAG)
+
+**Dosya**: `axion/core/workflow.py`
+
+**Sorumluluklar**:
+- ✅ Task dependency tracking
+- ✅ DAG (Directed Acyclic Graph) yönetimi
+- ✅ Automatic task chaining
+- ✅ Data passing between tasks
+
+```python
+class WorkflowManager:
+    # Yapı
+    _tasks: Dict[str, Task]                    # task_id → Task
+    _dependency_graph: Dict[str, List[str]]    # task_id → [dependent_ids]
+    _waiting_counts: Dict[str, int]            # task_id → waiting_count
+    _results: Dict[str, Result]                # task_id → Result
+    
+    def add_workflow(self, tasks: List[Task]):
+        """Workflow ekle"""
+        for task in tasks:
+            # Bağımlılık sayısını kaydet
+            waiting_counts[task.id] = len(task.dependencies)
+            
+            # Reverse graph oluştur
+            for dep_id in task.dependencies:
+                dependency_graph[dep_id].append(task.id)
+    
+    def task_completed(self, result: Result) -> List[Task]:
+        """Task tamamlandı, yeni task'ları döndür"""
+        results[result.task_id] = result
+        
+        # Bu task'a bağımlı olanları bul
+        dependents = dependency_graph[result.task_id]
+        
+        newly_ready = []
+        for dep_id in dependents:
+            waiting_counts[dep_id] -= 1
+            
+            # Tüm bağımlılıklar bittiyse
+            if waiting_counts[dep_id] == 0:
+                task = tasks[dep_id]
+                
+                # Veri aktarımı (upstream results)
+                task.params['upstream_results'] = {}
+                for dep in task.dependencies:
+                    task.params['upstream_results'][dep] = results[dep].data
+                
+                newly_ready.append(task)
+        
+        return newly_ready
+```
+
+**Örnek Workflow**:
+
+```python
+# Task A: Veri indir
+task_a = Task.create(
+    script_path="download.py",
+    params={"url": "https://api.example.com/data"}
+)
+
+# Task B: Veriyi işle (A'ya bağımlı)
+task_b = Task.create(
+    script_path="process.py",
+    params={"operation": "transform"},
+    dependencies=[task_a.id]
+)
+
+# Task C: Sonucu kaydet (B'ye bağımlı)
+task_c = Task.create(
+    script_path="save.py",
+    params={"output": "result.json"},
+    dependencies=[task_b.id]
+)
+
+# Workflow olarak gönder
+engine.submit_workflow([task_a, task_b, task_c])
+
+# Akış:
+# 1. task_a çalışır → tamamlanır
+# 2. task_b otomatik başlar (upstream_results['task_a_id'] = task_a sonucu)
+# 3. task_c otomatik başlar (upstream_results['task_b_id'] = task_b sonucu)
+```
+
+### 6. Backpressure Controller
+
+**Dosya**: `axion/core/backpressure.py`
+
+**Sorumluluklar**:
+- ✅ System resource monitoring
+- ✅ Task rejection when overloaded
+- ✅ Throttled health checks
+
+```python
+class BackpressureController:
+    def check_health(self) -> SystemHealth:
+        """Sistem sağlığını kontrol et (1 saniyede 1 kere)"""
+        # CPU usage
+        cpu_percent = psutil.cpu_percent()
+        
+        # Memory usage
+        memory_percent = psutil.virtual_memory().percent
+        
+        # Karar
+        if cpu_percent > 100 or memory_percent > 100:
+            return SystemHealth.CRITICAL  # Görev reddet
+        elif cpu_percent > 80:
+            return SystemHealth.WARNING   # Dikkatli kabul et
+        else:
+            return SystemHealth.HEALTHY   # Normal kabul
+    
+    def should_accept_task(self) -> bool:
+        """Görev kabul edilsin mi?"""
+        health = self.check_health()
+        return health != SystemHealth.CRITICAL
+```
 
 ---
 
-## Takip ve İzleme
+## ⚙️ Auto-Scaling Mekanizması
 
-### 1. Pending Tasks Takibi
+### Algoritma
 
-```python
-# Engine içinde
-_pending_tasks: Dict[str, Task] = {}
-```
+**Dosya**: `axion/engine/engine.py:_resource_manager_loop()`
 
-**Ne Takip Edilir:**
-- Gönderilen ama henüz tamamlanmamış görevler
-- Görev ID → Task objesi mapping
+**Özellikler**:
+- ✅ Queue-aware: Input queue boyutuna göre
+- ✅ Load-aware: Worker yüküne göre
+- ✅ Velocity-aware: Yük artış hızına göre
+- ✅ Worker warm-up tracking: Yeni worker'lar hazır olana kadar bekle
 
-**Kullanım:**
-- Görev durumu kontrolü
-- Cleanup işlemleri
-
-### 2. Result Cache
+### Mekanizma
 
 ```python
-# Engine içinde
-_result_cache: Dict[str, Result] = {}
+def _resource_manager_loop(self):
+    """Auto-scaling loop - her 2 saniyede bir çalışır"""
+    
+    CHECK_INTERVAL = 2.0  # seconds
+    FAST_CHECK_INTERVAL = 1.0  # kritik durumda
+    
+    # Thresholds
+    CPU_MAX_WORKERS = min(cpu_count * 2, 16)
+    IO_MAX_WORKERS = min(cpu_count * 3, 24)
+    
+    while not shutdown:
+        sleep(check_interval)
+        
+        # Metrikleri topla
+        input_queue_size = input_queue.qsize()
+        cpu_worker_count = process_pool.get_worker_count(CPU_BOUND)
+        io_worker_count = process_pool.get_worker_count(IO_BOUND)
+        
+        # Her worker için metrics
+        cpu_metrics = process_pool.get_cpu_worker_metrics()
+        io_metrics = process_pool.get_io_worker_metrics()
+        
+        # === CPU WORKER SCALING ===
+        
+        # Load hesapla
+        cpu_loads = [m['total_load'] for m in cpu_metrics]
+        cpu_avg_load = sum(cpu_loads) / cpu_worker_count
+        cpu_max_load = max(cpu_loads)
+        cpu_p75_load = percentile(cpu_loads, 0.75)
+        
+        # Queue pressure hesapla
+        estimated_cpu_pending = input_queue_size * 0.5
+        cpu_pending_per_worker = estimated_cpu_pending / cpu_worker_count
+        
+        # Velocity hesapla (trend)
+        cpu_load_history.append(cpu_avg_load)
+        if len(cpu_load_history) >= 5:
+            recent_avg = mean(cpu_load_history[-3:])
+            old_avg = mean(cpu_load_history[:3])
+            cpu_velocity = (recent_avg - old_avg) / time_elapsed
+        
+        # SCALE OUT DECISION
+        workers_to_add = 0
+        
+        # Priority 1: QUEUE PRESSURE
+        if cpu_pending_per_worker >= 100:  # tasks/worker
+            workers_to_add = min(2, CPU_MAX_WORKERS - cpu_worker_count)
+            reason = f"QUEUE PRESSURE: {cpu_pending_per_worker:.0f} tasks/worker"
+        
+        # Priority 2: EMERGENCY LOAD
+        elif cpu_max_load >= 10 and cpu_avg_usage >= 0.90:
+            workers_to_add = min(2, CPU_MAX_WORKERS - cpu_worker_count)
+            reason = f"EMERGENCY LOAD: max={cpu_max_load:.1f}"
+        
+        # Priority 3: HIGH VELOCITY
+        elif cpu_velocity >= 5.0 and cpu_avg_load >= 3.5:
+            workers_to_add = 1
+            reason = f"HIGH VELOCITY: {cpu_velocity:.2f}/s"
+        
+        # Priority 4: HIGH LOAD
+        elif cpu_p75_load >= 6.0 and cpu_avg_usage >= 0.75:
+            workers_to_add = 1
+            reason = f"HIGH LOAD: p75={cpu_p75_load:.1f}"
+        
+        # SCALE IN DECISION
+        elif cpu_avg_load < 1.2 and cpu_pending_per_worker < 5:
+            workers_to_remove = 1
+            reason = f"SCALE IN: low load"
+        
+        # Execute scaling
+        if workers_to_add > 0:
+            for _ in range(workers_to_add):
+                process_pool.add_worker(CPU_BOUND)
+            logger.warning(f"[CPU] Scale OUT +{workers_to_add} → {cpu_worker_count + workers_to_add} | {reason}")
+        
+        # === IO WORKER SCALING ===
+        # (Similar logic for IO workers)
 ```
 
-**Ne Takip Edilir:**
-- Tamamlanmış görevlerin sonuçları
-- Batch işlemler için önemli
+### Scaling Strategy
 
-**Kullanım:**
-- Batch işlemlerde sonuç kaybını önler
-- Hızlı sonuç erişimi
+| Durumu | Trigger | Action | Örnek |
+|--------|---------|--------|-------|
+| **Queue Pressure** | 100+ görev/worker | +2 worker | 10,000 görev geldi → hemen scale |
+| **Emergency Load** | max_load ≥ 10 | +2 worker | Bir worker aşırı yüklü |
+| **High Velocity** | velocity ≥ 5/s | +1 worker | Yük hızla artıyor |
+| **High Load** | p75_load ≥ 6 | +1 worker | Çoğu worker yüklü |
+| **Moderate Load** | avg_load ≥ 3.5 | +1 worker | Orta seviye yük |
+| **Low Load** | avg_load < 1.2 | -1 worker | Yük düştü, scale-in |
 
-### 3. Component Status
-
-Her component'in `get_status()` metodu var:
+### Velocity-Based Prediction
 
 ```python
-# InputQueue
-status = input_queue.get_status()
-# {
-#     "name": "input_queue",
-#     "health": "healthy",
-#     "metrics": {
-#         "size": 5,
-#         "maxsize": 1000,
-#         "total_put": 100,
-#         "total_dropped": 0
-#     }
-# }
+# Load history tutulur
+cpu_load_history = [1.0, 1.5, 2.0, 3.0, 4.5, 6.0, ...]
+
+# Velocity hesaplanır
+recent_avg = (4.5 + 6.0 + 7.5) / 3 = 6.0
+old_avg = (1.0 + 1.5 + 2.0) / 3 = 1.5
+time_diff = 6 iterations * 2 seconds = 12 seconds
+velocity = (6.0 - 1.5) / 12 = 0.375 load/second = 3.75 load/10s
+
+# Eğer velocity yüksekse (trend yukarı), proaktif scale-out
+if velocity >= 5.0:
+    # Yük hızla artıyor, hemen worker ekle
+    add_worker()
 ```
-
-**Takip Edilen Metrikler:**
-
-**InputQueue:**
-- `size`: Queue'daki görev sayısı
-- `maxsize`: Maksimum kapasite
-- `total_put`: Toplam gönderilen görev
-- `total_dropped`: Düşen görev (queue dolu)
-
-**OutputQueue:**
-- `size`: Queue'daki sonuç sayısı
-- `maxsize`: Maksimum kapasite
-- `total_put`: Toplam eklenen sonuç
-- `total_get`: Toplam alınan sonuç
-
-**ProcessPool:**
-- `total_workers`: Toplam worker sayısı
-- `cpu_workers`: CPU-bound worker sayısı
-- `io_workers`: IO-bound worker sayısı
-
-### 4. Engine Status
-
-```python
-status = engine.get_status()
-# {
-#     "engine": {
-#         "is_running": True
-#     },
-#     "components": {
-#         "input_queue": {...},
-#         "output_queue": {...},
-#         "process_pool": {...}
-#     }
-# }
-```
-
-**Ne Takip Edilir:**
-- Engine çalışma durumu
-- Tüm component'lerin durumu
-- Sistem sağlığı
 
 ---
 
-## Veri Yapıları
+## 🔄 Load Balancing
 
-### Task (Görev)
+### Score-Based Algorithm
+
+**Dosya**: `axion/worker/pool.py:submit_task()`
 
 ```python
-@dataclass
-class Task:
-    id: str                    # UUID
-    script_path: str           # Script dosya yolu
-    params: Dict[str, Any]     # Parametreler
-    task_type: TaskType        # CPU_BOUND veya IO_BOUND
-    status: TaskStatus         # PENDING, RUNNING, COMPLETED, FAILED
-    max_retries: int           # Maksimum deneme sayısı
-    retry_count: int           # Mevcut deneme sayısı
-    created_at: datetime       # Oluşturulma zamanı
+def submit_task(self, task, task_type):
+    """En az yüklü worker'a görev gönder"""
+    
+    workers = cpu_workers if task_type == CPU_BOUND else io_workers
+    
+    best_score = float('inf')
+    best_worker_idx = None
+    
+    for i, worker in enumerate(workers):
+        # Metrics topla
+        active_threads, process_queue, thread_queue = worker.active_thread_count()
+        cpu_usage = worker.process_metrics[CPU]
+        
+        # Load components
+        thread_load = active_threads + thread_queue
+        process_load = process_queue
+        cpu_norm = cpu_usage / 100.0
+        
+        # Score hesapla
+        if task_type == CPU_BOUND:
+            # CPU: Thread saturation kritik
+            score = (
+                process_load * 0.6 +    # Queue büyüklüğü
+                thread_load * 1.2 +     # Thread yükü (ağırlıklı)
+                cpu_norm * 0.05         # CPU kullanımı (az ağırlıklı)
+            )
+        else:
+            # IO: Queue doluluğu kritik
+            score = (
+                process_load * 1.0 +    # Queue büyüklüğü (ağırlıklı)
+                thread_load * 0.8 +     # Thread yükü
+                cpu_norm * 0.02         # CPU kullanımı (çok az)
+            )
+        
+        if score < best_score:
+            best_score = score
+            best_worker_idx = i
+    
+    # En düşük score'lu worker'a gönder
+    target_queue = queues[best_worker_idx]
+    target_queue.put(task)
 ```
 
-**Queue Formatı (Dict):**
+### Örnek Senaryo
+
+```
+Worker Status:
+- Worker 0: 5 active threads, 10 queued tasks, 80% CPU
+- Worker 1: 2 active threads, 3 queued tasks, 40% CPU
+- Worker 2: 8 active threads, 15 queued tasks, 95% CPU
+
+Score Calculation (CPU-bound):
+- Worker 0: 10*0.6 + (5+0)*1.2 + 0.8*0.05 = 6 + 6 + 0.04 = 12.04
+- Worker 1: 3*0.6 + (2+0)*1.2 + 0.4*0.05 = 1.8 + 2.4 + 0.02 = 4.22 ✅ (en düşük)
+- Worker 2: 15*0.6 + (8+0)*1.2 + 0.95*0.05 = 9 + 9.6 + 0.048 = 18.65
+
+→ Task Worker 1'e gönderilir
+```
+
+---
+
+## 📊 Queue Yönetimi
+
+### Sharded Queues
+
+Her worker'ın kendi queue'su var (latency optimization):
+
 ```python
+# ProcessPool
+_cpu_queues = [Queue0, Queue1, Queue2, Queue3]  # 4 CPU worker
+_io_queues = [Queue0, Queue1, ..., Queue7]      # 8 IO worker
+
+# Task submission
+best_worker_idx = 1  # Load balancing decision
+cpu_queues[best_worker_idx].put(task)  # Worker 1'in queue'suna
+```
+
+**Avantajları**:
+- ✅ Lock contention azalır (her queue bağımsız)
+- ✅ Worker isolation (bir worker crash olsa diğerleri etkilenmez)
+- ✅ Work stealing mümkün olur
+
+### Input/Output Queues
+
+```python
+# Engine level (global)
+input_queue = InputQueue(maxsize=1000)   # Task submission
+output_queue = OutputQueue(maxsize=10000) # Result collection
+
+# Kullanım
+input_queue.put(task.to_dict())      # Engine → Queue
+task_dict = input_queue.get()       # Queue → ProcessPool
+output_queue.put(result.to_dict())  # Worker → Queue
+result_dict = output_queue.get()    # Queue → Engine
+```
+
+---
+
+## 🔗 Process İletişimi
+
+### Multiprocessing Mechanisms
+
+```python
+# 1. Queue (task/result passing)
+task_queue = multiprocessing.Queue()
+task_queue.put(task_dict)
+task_dict = task_queue.get()
+
+# 2. Pipe (command/control)
+cmd_pipe, child_pipe = multiprocessing.Pipe()
+cmd_pipe.send({"command": "shutdown"})
+message = child_pipe.recv()
+
+# 3. Shared Memory (metrics)
+active_task_count = multiprocessing.Value('i', 0)
+with active_task_count.get_lock():
+    active_task_count.value += 1
+
+# 4. Array (process metrics)
+process_metrics = multiprocessing.Array('d', [0.0, 0.0])  # [CPU, MEM]
+process_metrics[0] = cpu_usage
+process_metrics[1] = memory_usage
+```
+
+---
+
+## 📈 Metrikler ve İzleme
+
+### Worker Metrics
+
+```python
+# ProcessPool.get_status()
 {
-    "task_id": "uuid",
-    "script_path": "/path/to/script.py",
-    "params": {"value": 42},
-    "task_type": "io_bound",
-    "max_retries": 3
+    "cpu_worker_tasks": {
+        "cpu-0": {
+            "active_tasks": 1,
+            "queue_size": 5,
+            "thread_pool_queue_size": 0,
+            "total_load": 6,
+            "cpu_usage": 85.3,
+            "memory_mb": 120.5
+        },
+        "cpu-1": {...}
+    },
+    "io_worker_tasks": {
+        "io-0": {...},
+        ...
+    }
 }
 ```
 
-### Result (Sonuç)
+### Engine Metrics
 
 ```python
-@dataclass
-class Result:
-    task_id: str                      # Görev ID'si
-    status: TaskStatus                # COMPLETED veya FAILED
-    data: Any                         # Sonuç verisi
-    error: Optional[str]              # Hata mesajı (varsa)
-    error_details: Optional[Dict]     # Detaylı hata (varsa)
-    started_at: Optional[datetime]    # Başlangıç zamanı
-    completed_at: datetime            # Bitiş zamanı
-```
-
-**Queue Formatı (Dict):**
-```python
+# Engine.get_status()
 {
-    "task_id": "uuid",
-    "status": "SUCCESS",  # veya "FAILED"
-    "data": {...},
-    "error": None,
-    "started_at": "2024-01-01T12:00:00",
-    "completed_at": "2024-01-01T12:00:01"
+    "engine": {
+        "is_running": true
+    },
+    "components": {
+        "input_queue": {
+            "size": 150,
+            "total_put": 10000,
+            "total_dropped": 5
+        },
+        "output_queue": {
+            "size": 2,
+            "total_put": 9995,
+            "total_get": 9993
+        },
+        "process_pool": {
+            "cpu_bound_workers": 6,
+            "io_bound_workers": 12,
+            "cpu_active_threads": 6,
+            "io_active_threads": 45
+        }
+    }
 }
 ```
 
-### ExecutionContext
+---
 
-```python
-class ExecutionContext:
-    task_id: str      # Görev ID'si
-    worker_id: str    # Worker ID'si (örn: "io-0")
-```
+## 🎯 Özet
 
-**Kullanım:**
-- Script'lere geçirilir
-- Script içinde görev ve worker bilgisine erişim sağlar
+### Temel Prensipler
+
+1. **Separation of Concerns**: CPU ve IO işler ayrı havuzlarda
+2. **Sharded Queues**: Her worker'ın kendi queue'su
+3. **Work Stealing**: Boş worker'lar yüklü worker'lardan çalar
+4. **Auto-Scaling**: Queue, load, velocity bazlı dinamik ölçeklendirme
+5. **Workflow Management**: DAG-based task dependencies
+6. **Backpressure Control**: Sistem aşırı yüklüyse görev reddi
+
+### Performans Optimizasyonları
+
+- ✅ CPU Affinity: Worker'ları CPU core'larına sabitleme
+- ✅ Nice Level: Process önceliklendirme
+- ✅ Module Caching: Script'leri cache'leme
+- ✅ Shared Memory: Metric collection overhead azaltma
+- ✅ Score-Based Load Balancing: Intelligent task distribution
+- ✅ Predictive Scaling: Velocity-based proactive scaling
+
+### Scalability Features
+
+- ✅ Dynamic worker addition/removal
+- ✅ Queue-aware scaling (10,000 görev → hemen scale)
+- ✅ Worker warm-up tracking
+- ✅ Makul maksimum limitler (CPU: 16, IO: 24)
+- ✅ Independent scaling (CPU ve IO ayrı)
 
 ---
 
-## Tam Akış Diyagramı
+## 📚 İlgili Dokümantasyon
 
-```
-┌─────────────┐
-│  Kullanıcı  │
-└──────┬──────┘
-       │
-       │ 1. Task.create()
-       ▼
-┌─────────────┐
-│    Task     │ (id, script_path, params, task_type)
-└──────┬──────┘
-       │
-       │ 2. engine.submit_task(task)
-       ▼
-┌─────────────┐
-│   Engine    │
-│             │
-│  ┌────────┐ │
-│  │InputQ  │ │ 3. input_queue.put(task_dict)
-│  └────┬───┘ │
-│       │     │
-│       │     │ 4. _process_queue_loop() (Thread)
-│       │     │    input_queue.get() → process_pool.submit_task()
-│       │     │
-└───────┼─────┘
-        │
-        │ 5. ProcessPool (Load Balancing)
-        ▼
-┌─────────────┐
-│ProcessPool │
-│            │
-│ ┌────────┐ │
-│ │CPU     │ │ 6. En az yüklü worker seç
-│ │Workers │ │
-│ └───┬────┘ │
-│     │      │
-│ ┌───▼────┐ │
-│ │IO      │ │
-│ │Workers │ │
-│ └───┬────┘ │
-└─────┼──────┘
-      │
-      │ 7. WorkerProcess.submit_task()
-      ▼
-┌─────────────┐
-│WorkerProcess│
-│             │
-│ ┌─────────┐ │
-│ │ThreadPool│ │ 8. thread_pool.submit_task()
-│ └────┬────┘ │
-│      │      │
-│      │      │ 9. Thread alır görevi
-│      │      │
-│      │      │ 10. PythonExecutor.execute()
-│      │      │
-│      │      │ 11. Script çalıştırılır
-│      │      │    main(params, context)
-│      │      │
-│      │      │ 12. Result oluşturulur
-│      │      │
-│      └──────┼──► 13. output_queue.put(result_dict)
-│             │
-└─────────────┘
-      │
-      │ 14. output_queue.get()
-      ▼
-┌─────────────┐
-│   Engine    │
-│             │
-│  ┌────────┐ │
-│  │OutputQ │ │ 15. Result cache'e kaydet (batch için)
-│  └────┬───┘ │
-│       │     │
-│       │     │ 16. engine.get_result(task_id)
-│       │     │    Cache'den veya queue'dan al
-│       │     │
-└───────┼─────┘
-        │
-        │ 17. Result döndür
-        ▼
-┌─────────────┐
-│  Kullanıcı  │
-└─────────────┘
-```
-
----
-
-## Önemli Noktalar
-
-### 1. Paralel İşleme
-
-- **Process seviyesi**: Her worker ayrı bir process
-- **Thread seviyesi**: Her worker içinde birden fazla thread
-- **Load balancing**: Görevler en az yüklü worker'a gönderilir
-
-### 2. Queue Yönetimi
-
-- **InputQueue**: Görevlerin gönderildiği yer
-- **OutputQueue**: Sonuçların toplandığı yer
-- **Multiprocessing.Queue**: Process'ler arası iletişim
-
-### 3. Result Cache
-
-- Batch işlemler için kritik
-- Queue'dan gelen sonuçlar cache'lenir
-- İstenen task_id değilse cache'e kaydedilir
-
-### 4. Takip Mekanizmaları
-
-- **Pending tasks**: Gönderilen görevler
-- **Result cache**: Tamamlanan görevler
-- **Component status**: Her component'in durumu
-- **Metrics**: Queue boyutları, görev sayıları
-
----
-
-## Özet
-
-### Girdi (Input)
-1. Task oluştur → `Task.create()`
-2. Engine'e gönder → `engine.submit_task()`
-3. InputQueue'ya ekle
-4. Queue processing thread alır
-5. ProcessPool'a gönder (load balancing)
-6. Worker'a dağıt
-7. Thread'e ver
-8. Executor çalıştır
-
-### Çıktı (Output)
-1. Executor sonuç döndürür
-2. Result objesi oluşturulur
-3. OutputQueue'ya eklenir
-4. Engine queue'dan alır
-5. Cache'e kaydedilir (batch için)
-6. Kullanıcı `get_result()` ile alır
-
-### Takip
-- Pending tasks: Gönderilen görevler
-- Result cache: Tamamlanan görevler
-- Component status: Sistem durumu
-- Metrics: Performans metrikleri
-
+- [Module Overview](./module_overview.md) - Genel bakış
+- [Data Flow](./data_flow.md) - Veri akışı detayları
+- [Examples Guide](./examples_guide.md) - Kullanım örnekleri
+- [Output Interpretation](./output_interpretation.md) - Çıktı yorumlama

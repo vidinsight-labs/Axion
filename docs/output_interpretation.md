@@ -1,148 +1,212 @@
-# Çıktı Yorumlama Kılavuzu
+# Axion - Çıktı Yorumlama Kılavuzu
 
-Bu dokümantasyon, CPU Load Balancer örneklerinin çıktılarının nasıl yorumlanacağını detaylı olarak açıklar.
+**Axion v3.0** - Log Mesajları, Metrikler ve Hata Yorumlama
 
-## İçindekiler
+Bu dokümantasyon, Axion'un ürettiği çıktıların, log mesajlarının ve metriklerin nasıl yorumlanacağını açıklar.
 
-1. [Çıktı Formatı](#çıktı-formatı)
-2. [Durum Mesajları](#durum-mesajları)
+## 📑 İçindekiler
+
+1. [Log Mesajları](#log-mesajları)
+2. [Auto-Scaling Logları](#auto-scaling-logları)
 3. [Hata Mesajları](#hata-mesajları)
-4. [İstatistikler](#istatistikler)
-5. [Zamanlama Bilgileri](#zamanlama-bilgileri)
+4. [Sistem Metrikleri](#sistem-metrikleri)
+5. [Performans Göstergeleri](#performans-göstergeleri)
 
 ---
 
-## Çıktı Formatı
+## 📝 Log Mesajları
 
-### Genel Yapı
+### Log Seviyeleri
 
-CPU Load Balancer çıktıları şu bölümlerden oluşur:
+Axion, Python'un standart logging sistemini kullanır:
 
-1. **Başlık**: Örnek adı ve ayırıcı çizgiler
-2. **Config Bilgisi**: Engine yapılandırması
-3. **Görev Gönderimi**: Görevlerin gönderilme durumu
-4. **Sonuçlar**: Görev sonuçları
-5. **İstatistikler**: Özet bilgiler
-6. **Final Durum**: Sistem durumu
+- **DEBUG**: Detaylı debug bilgileri
+- **INFO**: Genel bilgilendirme mesajları
+- **WARNING**: Uyarılar (kritik değil)
+- **ERROR**: Hatalar (kritik)
+- **CRITICAL**: Kritik hatalar
+
+### Engine Başlatma
+
+```
+INFO:engine:Engine başlatıldı
+```
+
+**Yorumlama:**
+- ✅ Engine başarıyla başlatıldı
+- Worker process'leri ve thread'ler hazır
+- Queue'lar oluşturuldu
+
+### Görev Gönderme
+
+```
+INFO:engine:Görev gönderildi: abc123...
+```
+
+**Yorumlama:**
+- ✅ Görev başarıyla queue'ya eklendi
+- Task ID gösterilir (ilk 8 karakter)
+- Görev işlenmeye başlayacak
+
+### Sonuç Alma
+
+```
+INFO:engine:Sonuç alındı: abc123...
+```
+
+**Yorumlama:**
+- ✅ Sonuç başarıyla alındı
+- Result cache'den veya queue'dan geldi
 
 ---
 
-## Durum Mesajları
+## ⚡ Auto-Scaling Logları
 
-### ✅ Başarılı İşlemler
+### Scale-Out (Worker Ekleme)
 
-```
-✅ Engine başlatıldı
-✅ Görev gönderildi: fcccdf0b...
-✅ Görev başarılı!
-```
-
-**Yorumlama:**
-- İşlem başarıyla tamamlandı
-- Sistem normal çalışıyor
-- Devam edebilirsiniz
-
-### ⏳ Bekleme Durumları
+#### Queue Pressure
 
 ```
-⏳ Sonuç bekleniyor...
+WARNING:engine:[CPU] Scale OUT +2 → 6 workers | QUEUE PRESSURE: 2500 tasks/worker (queue=10000)
 ```
 
 **Yorumlama:**
-- Görev işleniyor
-- Sonuç henüz gelmedi
-- Normal bir durum (bekleyin)
+- ⚠️ **WARNING seviyesi**: Kritik değil, bilgilendirme
+- **+2 worker**: 2 worker eklendi
+- **6 workers**: Toplam worker sayısı
+- **QUEUE PRESSURE**: Input queue'da çok fazla görev var
+- **2500 tasks/worker**: Her worker'a ortalama 2500 görev düşüyor
+- **queue=10000**: Input queue'da 10,000 görev bekliyor
 
-### ❌ Başarısız İşlemler
+**Ne Yapmalı?**
+- ✅ Normal: Auto-scaling çalışıyor
+- ✅ Beklenen: Yüksek yük durumunda normal
+- ⚠️ Dikkat: Sürekli scale-out oluyorsa max limit'e yaklaşıyor olabilir
 
-```
-❌ Görev başarısız
-❌ Timeout - sonuç alınamadı
-```
-
-**Yorumlama:**
-- İşlem başarısız oldu
-- Hata mesajını kontrol edin
-- Sorun giderme gerekebilir
-
-### ⚠️ Uyarılar
+#### Emergency Load
 
 ```
-⚠️ Config yükleme hatası: ...
+WARNING:engine:[CPU] Scale OUT +2 → 8 workers | EMERGENCY: max_load=12.5, cpu=0.95
 ```
 
 **Yorumlama:**
-- Kritik olmayan bir sorun var
-- Sistem çalışmaya devam edebilir
-- Dikkat edilmesi gereken bir durum
+- **EMERGENCY**: Kritik durum
+- **max_load=12.5**: En yüklü worker'ın load'u 12.5
+- **cpu=0.95**: CPU kullanımı %95
+- **+2 worker**: Acil olarak 2 worker eklendi
+
+**Ne Yapmalı?**
+- ⚠️ **Dikkat**: Sistem aşırı yüklü
+- ✅ Auto-scaling tepki verdi
+- 🔍 **Kontrol**: Worker'lar yeterli mi? Config optimize edilmeli mi?
+
+#### High Velocity
+
+```
+INFO:engine:[CPU] Scale OUT +1 → 5 workers | HIGH VELOCITY: velocity=5.2/s, load=4.8
+```
+
+**Yorumlama:**
+- **HIGH VELOCITY**: Yük hızla artıyor (predictive scaling)
+- **velocity=5.2/s**: Her saniye 5.2 load artışı
+- **load=4.8**: Mevcut ortalama load
+- **+1 worker**: Proaktif olarak 1 worker eklendi
+
+**Ne Yapmalı?**
+- ✅ **İyi**: Predictive scaling çalışıyor
+- ✅ Sistem yükü artmadan önce worker eklendi
+
+#### High Load
+
+```
+INFO:engine:[CPU] Scale OUT +1 → 4 workers | HIGH LOAD: p75=6.5, cpu=0.78
+```
+
+**Yorumlama:**
+- **HIGH LOAD**: Yüksek yük durumu
+- **p75=6.5**: %75'lik worker'ın load'u 6.5
+- **cpu=0.78**: CPU kullanımı %78
+- **+1 worker**: 1 worker eklendi
+
+### Scale-In (Worker Çıkarma)
+
+```
+INFO:engine:[CPU] Scale IN -1 → 3 workers | SCALE IN: avg=0.8, cpu=0.15
+```
+
+**Yorumlama:**
+- **SCALE IN**: Worker sayısı azaltıldı
+- **-1 worker**: 1 worker çıkarıldı
+- **3 workers**: Kalan worker sayısı
+- **avg=0.8**: Ortalama load düşük
+- **cpu=0.15**: CPU kullanımı %15 (düşük)
+
+**Ne Yapmalı?**
+- ✅ **Normal**: Yük azaldı, gereksiz worker'lar kaldırıldı
+- ✅ Kaynak tasarrufu sağlanıyor
+
+### Fast Check Mode
+
+```
+WARNING:engine:[CPU] Scale OUT +2 → 10 workers | EMERGENCY: max_load=11.2, cpu=0.92
+```
+
+**Ardından:**
+- Resource Manager loop **1 saniyede bir** çalışır (normal: 2 saniye)
+- Kritik durum bitene kadar hızlı kontrol devam eder
+
+**Yorumlama:**
+- ⚡ **Hızlı tepki**: Sistem kritik durumda
+- ✅ Auto-scaling daha sık kontrol ediyor
 
 ---
 
-## Hata Mesajları
+## ❌ Hata Mesajları
 
-### Görev Hataları
+### Engine Hataları
 
-#### 1. Script Bulunamadı
+#### Engine Zaten Başlatılmış
 
 ```
-❌ Script bulunamadı: /path/to/script.py
+ERROR:engine:Engine zaten başlatılmış [ENG001]
 ```
 
 **Neden:**
-- Script dosyası belirtilen yolda yok
-- Dosya adı yanlış yazılmış
-- Path yanlış
+- `engine.start()` iki kez çağrıldı
 
 **Çözüm:**
 ```python
-# Doğru path kullan
-script_path = Path(__file__).parent / "script.py"
+# Yanlış
+engine.start()
+engine.start()  # ❌ Hata!
+
+# Doğru
+engine.start()
 # veya
-script_path = "/absolute/path/to/script.py"
+with Engine() as engine:  # ✅ Context manager kullan
 ```
 
-#### 2. Main Fonksiyonu Bulunamadı
+#### Engine Başlatılmamış
 
 ```
-❌ Hata: Script'te 'main' fonksiyonu bulunamadı
-```
-
-**Neden:**
-- Script'te `main(params, context)` fonksiyonu yok
-- Fonksiyon adı yanlış
-
-**Çözüm:**
-```python
-# Script'te main fonksiyonu olmalı
-def main(params: dict, context) -> dict:
-    # İşlemler
-    return {"result": "success"}
-```
-
-#### 3. Timeout
-
-```
-❌ Timeout - sonuç alınamadı
+ERROR:engine:Engine başlatılmamış [ENG002]
 ```
 
 **Neden:**
-- Görev belirtilen sürede tamamlanamadı
-- Worker'lar meşgul
-- Görev çok uzun sürüyor
+- `engine.start()` çağrılmadan görev gönderildi
 
 **Çözüm:**
 ```python
-# Timeout süresini artır
-result = engine.get_result(task_id, timeout=60.0)
-
-# Veya worker sayısını artır
-config = EngineConfig(io_bound_count=10)
+engine.start()  # Önce başlat
+engine.submit_task(task)  # Sonra görev gönder
 ```
 
-#### 4. Queue Dolu
+### Task Hataları
+
+#### Queue Dolu
 
 ```
-❌ Queue dolu, görev eklenemedi
+ERROR:engine:Queue dolu, görev eklenemedi [TASK001]
 ```
 
 **Neden:**
@@ -151,227 +215,371 @@ config = EngineConfig(io_bound_count=10)
 
 **Çözüm:**
 ```python
-# Queue boyutunu artır
+# 1. Queue boyutunu artır
 config = EngineConfig(input_queue_size=10000)
 
-# Veya görev göndermeyi yavaşlat
-time.sleep(0.1)  # Her görev arasında bekle
+# 2. Auto-scaling çalışıyor mu kontrol et
+# Auto-scaling otomatik worker ekler, ama queue dolmadan önce
+
+# 3. Görev göndermeyi yavaşlat
+for task in tasks:
+    engine.submit_task(task)
+    time.sleep(0.01)  # Biraz bekle
 ```
+
+#### Backpressure Active
+
+```
+ERROR:engine:Sistem aşırı yüklü (Backpressure Active) [TASK002]
+```
+
+**Neden:**
+- CPU kullanımı > %100 veya Memory > %100
+- BackpressureController görev kabul etmiyor
+
+**Çözüm:**
+```python
+# 1. Sistem kaynaklarını kontrol et
+import psutil
+print(f"CPU: {psutil.cpu_percent()}%")
+print(f"Memory: {psutil.virtual_memory().percent}%")
+
+# 2. Biraz bekle ve tekrar dene
+time.sleep(5)
+result = engine.submit_task(task)
+
+# 3. Worker sayısını azalt (paradoks ama bazen gerekli)
+config = EngineConfig(cpu_bound_count=2)  # Daha az worker
+```
+
+### Script Hataları
+
+#### Main Fonksiyonu Bulunamadı
+
+```
+ERROR:executor:Script'te 'main' fonksiyonu bulunamadı: script.py
+```
+
+**Neden:**
+- Script'te `main(params, context)` fonksiyonu yok
+
+**Çözüm:**
+```python
+# script.py
+def main(params, context):
+    # İşlemler
+    return {"result": "success"}
+```
+
+#### Script Yüklenemedi
+
+```
+ERROR:executor:Script yüklenemedi: /path/to/script.py
+```
+
+**Neden:**
+- Script dosyası yok
+- Path yanlış
+- Dosya okuma izni yok
+
+**Çözüm:**
+```python
+# Absolute path kullan
+script_path = "/absolute/path/to/script.py"
+
+# Veya Path objesi
+from pathlib import Path
+script_path = str(Path(__file__).parent / "script.py")
+```
+
+### Worker Hataları
+
+#### Worker Process Crash
+
+```
+ERROR:worker:Worker process crashed: io-2
+```
+
+**Neden:**
+- Worker process beklenmedik şekilde sonlandı
+- Script'te fatal error
+- Memory overflow
+
+**Çözüm:**
+- ✅ Auto-scaling otomatik yeni worker ekler
+- 🔍 Script'i kontrol et (fatal error var mı?)
+- 🔍 Memory kullanımını kontrol et
 
 ---
 
-## İstatistikler
+## 📊 Sistem Metrikleri
 
-### Görev İstatistikleri
-
-```
-📈 Özet:
-   Toplam görev: 8
-   Başarılı: 8
-   Başarısız: 0
-```
-
-**Yorumlama:**
-- **Toplam görev**: Gönderilen görev sayısı
-- **Başarılı**: Başarıyla tamamlanan görev sayısı
-- **Başarısız**: Hata alan görev sayısı
-
-**İdeal durum:**
-- Başarılı = Toplam görev
-- Başarısız = 0
-
-### Queue İstatistikleri
-
-```
-📊 Final Durum:
-   input_queue: 8 görev işlendi
-   output_queue: 0 görev işlendi
-```
-
-**Yorumlama:**
-- **input_queue**: Queue'ya eklenen görev sayısı
-- **output_queue**: Queue'dan alınan sonuç sayısı
-  - Not: Cache kullanıldığı için 0 görünebilir (normal)
-
-### Worker İstatistikleri
-
-```
-📊 Sistem Durumu:
-   Engine: 🟢 Çalışıyor
-   input_queue: healthy
-   output_queue: healthy
-   process_pool: healthy
-```
-
-**Yorumlama:**
-- **🟢 Çalışıyor**: Engine aktif
-- **🔴 Durdu**: Engine durmuş
-- **healthy**: Component sağlıklı
-- **unhealthy**: Component'te sorun var
-
----
-
-## Zamanlama Bilgileri
-
-### Görev Gönderim Zamanı
-
-```
-[0.001s] Görev 0 gönderildi
-[0.001s] Görev 1 gönderildi
-[0.002s] Görev 2 gönderildi
-```
-
-**Yorumlama:**
-- Görevler çok hızlı gönderildi (batch gönderim)
-- Tüm görevler neredeyse aynı anda queue'ya eklendi
-- Bu normal ve beklenen bir durum
-
-### Görev Tamamlanma Zamanı
-
-```
-[0.577s] Görev 0 tamamlandı
-[0.577s] Görev 1 tamamlandı
-[0.578s] Görev 2 tamamlandı
-```
-
-**Yorumlama:**
-- Görevler paralel çalıştı (neredeyse aynı anda tamamlandı)
-- Fark çok küçük (0.001s) = Paralel işleme kanıtı
-- Eğer sırayla çalışsaydı: ~5-10 saniye sürerdi
-
-### Toplam Süre
-
-```
-Toplam süre: 0.579 saniye
-Eğer sırayla çalışsaydı: ~10 saniye
-Paralel çalışma oranı: 17.28x hızlanma
-```
-
-**Yorumlama:**
-- **Toplam süre**: İlk görev gönderiminden son sonuç alınana kadar
-- **Sırayla süre**: Eğer görevler sırayla çalışsaydı (tahmini)
-- **Hızlanma**: Paralel çalışmanın sağladığı hız artışı
-
----
-
-## Sonuç Verileri
-
-### Başarılı Sonuç
+### Engine Status
 
 ```python
+status = engine.get_status()
+
 {
-    'result': 84,
-    'original_value': 42,
-    'test_mode': True,
-    'task_id': 'fcccdf0b-562d-4985-a019-568dacd04ae7',
-    'worker_id': 'io-0',
-    'status': 'success'
+    "engine": {
+        "is_running": true
+    },
+    "components": {
+        "input_queue": {
+            "name": "input_queue",
+            "health": "healthy",
+            "metrics": {
+                "size": 150,
+                "maxsize": 1000,
+                "fullness": 0.15,
+                "total_put": 10000,
+                "total_dropped": 5
+            }
+        },
+        "output_queue": {
+            "name": "output_queue",
+            "health": "healthy",
+            "metrics": {
+                "size": 2,
+                "maxsize": 10000,
+                "total_put": 9995,
+                "total_get": 9993
+            }
+        },
+        "process_pool": {
+            "name": "process_pool",
+            "health": "healthy",
+            "metrics": {
+                "cpu_bound_workers": 6,
+                "io_bound_workers": 12,
+                "total_workers": 18,
+                "cpu_active_threads": 6,
+                "io_active_threads": 45,
+                "total_active_threads": 51,
+                "cpu_worker_tasks": {
+                    "cpu-0": {
+                        "active_tasks": 1,
+                        "queue_size": 5,
+                        "thread_pool_queue_size": 0,
+                        "total_load": 6,
+                        "cpu_usage": 85.3
+                    },
+                    ...
+                },
+                "io_worker_tasks": {...}
+            }
+        }
+    }
 }
 ```
 
-**Alanlar:**
-- **result**: İşlem sonucu (script'in döndürdüğü ana değer)
-- **original_value**: Gönderilen parametre
-- **test_mode**: Test modu aktif mi?
-- **task_id**: Görevin benzersiz ID'si
-- **worker_id**: Görevi işleyen worker (`io-0` = IO-bound worker 0)
-- **status**: Görev durumu (`success`)
+### Metrik Yorumlama
 
-### Başarısız Sonuç
+#### Input Queue
+
+| Metrik | Açıklama | İdeal Değer |
+|--------|----------|-------------|
+| `size` | Queue'daki görev sayısı | 0-100 (düşük) |
+| `fullness` | Doluluk oranı | < 0.5 (50%) |
+| `total_put` | Toplam gönderilen | Artıyor |
+| `total_dropped` | Düşen görev | 0 (ideal) |
+
+**Yorumlama:**
+- ✅ `size < 100`: Queue boş, sistem rahat
+- ⚠️ `size > 500`: Queue dolu, auto-scaling çalışmalı
+- ❌ `total_dropped > 0`: Queue taştı, boyut artırılmalı
+
+#### Output Queue
+
+| Metrik | Açıklama | İdeal Değer |
+|--------|----------|-------------|
+| `size` | Queue'daki sonuç sayısı | 0-10 (düşük) |
+| `total_put` | Toplam eklenen | Artıyor |
+| `total_get` | Toplam alınan | ≈ total_put |
+
+**Yorumlama:**
+- ✅ `size < 10`: Sonuçlar hızlıca alınıyor
+- ⚠️ `size > 100`: Sonuçlar birikiyor, `get_result()` çağrıları yavaş
+
+#### Process Pool
+
+| Metrik | Açıklama | İdeal Değer |
+|--------|----------|-------------|
+| `cpu_bound_workers` | CPU worker sayısı | 1-16 |
+| `io_bound_workers` | IO worker sayısı | 4-24 |
+| `total_active_threads` | Aktif thread sayısı | Worker sayısına göre |
+
+**Yorumlama:**
+- ✅ Worker sayıları auto-scaling ile optimize edilmiş
+- ⚠️ Sürekli max limit'teyse: Config optimize edilmeli
+
+#### Worker Metrics
 
 ```python
-{
-    'status': 'failed',
-    'error': "Script'te 'main' fonksiyonu bulunamadı",
-    'error_details': {...}
+"cpu-0": {
+    "active_tasks": 1,              # Şu an çalışan thread sayısı
+    "queue_size": 5,                # Worker'ın kendi queue'sunda bekleyen
+    "thread_pool_queue_size": 0,    # ThreadPool queue'sunda bekleyen
+    "total_load": 6,                # active + queue + thread_pool_queue
+    "cpu_usage": 85.3               # Worker process'in CPU kullanımı (%)
 }
 ```
 
-**Alanlar:**
-- **status**: `failed`
-- **error**: Hata mesajı
-- **error_details**: Detaylı hata bilgisi (varsa)
+**Yorumlama:**
+- ✅ `total_load < 5`: Worker rahat
+- ⚠️ `total_load > 10`: Worker aşırı yüklü, scale-out gerekli
+- ✅ `cpu_usage < 80%`: CPU kullanımı normal
+- ⚠️ `cpu_usage > 90%`: CPU bottleneck, worker eklenmeli
 
 ---
 
-## Örnek Senaryolar
+## 📈 Performans Göstergeleri
 
-### Senaryo 1: Tüm Görevler Başarılı
-
-```
-✅ 5/5 görev başarıyla tamamlandı
-```
-
-**Yorumlama:**
-- Mükemmel! Tüm görevler başarılı
-- Sistem normal çalışıyor
-- Herhangi bir sorun yok
-
-### Senaryo 2: Bazı Görevler Başarısız
+### Throughput
 
 ```
-✅ 3/5 görev başarıyla tamamlandı
-❌ 2 görev başarısız
+📊 Throughput: 350 görev/saniye
 ```
 
 **Yorumlama:**
-- Bazı görevler başarısız oldu
-- Hata mesajlarını kontrol edin
-- Script'leri ve parametreleri kontrol edin
+- ✅ **300-500 görev/s**: İyi performans (IO-bound)
+- ✅ **100-200 görev/s**: İyi performans (CPU-bound)
+- ⚠️ **< 50 görev/s**: Düşük performans, optimize edilmeli
 
-### Senaryo 3: Timeout'lar
+### Latency
 
 ```
-✅ 1/5 görev başarıyla tamamlandı
-⏱️  4 görev timeout
+📊 Ortalama Latency: 45ms
+📊 P95 Latency: 120ms
+📊 P99 Latency: 250ms
 ```
 
 **Yorumlama:**
-- Çoğu görev timeout aldı
-- Timeout süresini artırın
-- Worker sayısını artırın
-- Görevlerin çok uzun sürmediğinden emin olun
+- ✅ **< 100ms**: Çok iyi (düşük yük)
+- ✅ **100-500ms**: İyi (orta yük)
+- ⚠️ **> 1000ms**: Yavaş, optimize edilmeli
+
+### Auto-Scaling Etkinliği
+
+```
+📊 Scale Events: 15
+📊 Scale-Out: 12
+📊 Scale-In: 3
+📊 Final Workers: 14 (CPU: 6, IO: 8)
+```
+
+**Yorumlama:**
+- ✅ **Scale-Out > Scale-In**: Yük artışı var, sistem adapt oldu
+- ✅ **Final Workers**: Sistem yüküne göre optimize edilmiş
+- ⚠️ **Sürekli Scale**: Config optimize edilmeli
 
 ---
 
-## İpuçları
+## 🎯 Örnek Senaryolar
+
+### Senaryo 1: Normal Çalışma
+
+```
+INFO:engine:Engine başlatıldı
+INFO:engine:Görev gönderildi: abc123...
+INFO:engine:Sonuç alındı: abc123...
+✅ Görev başarılı!
+```
+
+**Yorumlama:**
+- ✅ Tüm işlemler başarılı
+- ✅ Sistem normal çalışıyor
+- ✅ Herhangi bir sorun yok
+
+### Senaryo 2: Yüksek Yük
+
+```
+WARNING:engine:[CPU] Scale OUT +2 → 6 workers | QUEUE PRESSURE: 2500 tasks/worker
+WARNING:engine:[CPU] Scale OUT +2 → 8 workers | QUEUE PRESSURE: 1250 tasks/worker
+INFO:engine:[CPU] Scale OUT +1 → 9 workers | HIGH LOAD: p75=6.2
+...
+INFO:engine:[CPU] Scale IN -1 → 8 workers | SCALE IN: avg=0.9
+```
+
+**Yorumlama:**
+- ✅ Auto-scaling çalışıyor
+- ✅ Yük artışına tepki verdi
+- ✅ Yük azalınca scale-in yaptı
+- ✅ Sistem dengeli
+
+### Senaryo 3: Sistem Aşırı Yüklü
+
+```
+ERROR:engine:Sistem aşırı yüklü (Backpressure Active) [TASK002]
+WARNING:engine:[CPU] Scale OUT +2 → 10 workers | EMERGENCY: max_load=12.5
+ERROR:engine:Sistem aşırı yüklü (Backpressure Active) [TASK002]
+```
+
+**Yorumlama:**
+- ❌ Sistem kritik durumda
+- ⚠️ Backpressure aktif (yeni görev kabul etmiyor)
+- ✅ Auto-scaling çalışıyor ama yeterli değil
+- 🔍 **Aksiyon**: Worker sayısını manuel artır veya görev göndermeyi durdur
+
+---
+
+## 💡 İpuçları
 
 ### 1. Log Seviyesini Ayarlayın
 
 ```python
-config = EngineConfig(log_level="DEBUG")
+config = EngineConfig(log_level="DEBUG")  # Daha detaylı log
 ```
 
-Daha detaylı log mesajları için.
-
-### 2. Zamanlama Bilgilerini Takip Edin
-
-Görevlerin ne kadar sürdüğünü görmek için zamanlama bilgilerini kullanın.
-
-### 3. Sistem Durumunu Kontrol Edin
+### 2. Metrikleri Düzenli Kontrol Edin
 
 ```python
 status = engine.get_status()
-print(status)
+print(f"Queue size: {status['components']['input_queue']['metrics']['size']}")
+print(f"Workers: {status['components']['process_pool']['metrics']['total_workers']}")
 ```
 
-Sistem sağlığını kontrol edin.
+### 3. Auto-Scaling Loglarını İzleyin
 
-### 4. Hata Mesajlarını Okuyun
+```bash
+# Sadece auto-scaling loglarını göster
+python script.py 2>&1 | grep "Scale"
+```
 
-Hata mesajları genellikle sorunun ne olduğunu açıkça belirtir.
+### 4. Hata Mesajlarını Dikkatlice Okuyun
+
+Hata mesajları genellikle sorunun ne olduğunu açıkça belirtir:
+- `[ENG001]`: Engine hatası
+- `[TASK001]`: Task hatası
+- `[TASK002]`: Backpressure aktif
 
 ---
 
-## Özet
+## 📚 Özet
 
-- ✅ **Başarılı**: İşlem tamamlandı
-- ❌ **Başarısız**: Hata var, mesajı okuyun
-- ⏳ **Bekleme**: Normal, bekleyin
-- ⚠️ **Uyarı**: Dikkat edilmesi gereken durum
-- 📊 **İstatistikler**: Sistem performansı
-- 🟢 **Sağlıklı**: Sistem normal çalışıyor
-- 🔴 **Sorunlu**: Sistem durmuş veya hata var
+### Log Seviyeleri
 
-Daha fazla bilgi için `examples_guide.md` dosyasına bakın.
+- **INFO**: Normal işlemler
+- **WARNING**: Auto-scaling, uyarılar
+- **ERROR**: Hatalar, kritik durumlar
 
+### Auto-Scaling Mesajları
+
+- **QUEUE PRESSURE**: Queue'da çok görev var
+- **EMERGENCY**: Kritik yük durumu
+- **HIGH VELOCITY**: Yük hızla artıyor
+- **HIGH LOAD**: Yüksek yük
+- **SCALE IN**: Yük azaldı, worker çıkarıldı
+
+### Metrik Yorumlama
+
+- ✅ **Healthy**: Sistem normal
+- ⚠️ **Warning**: Dikkat edilmeli
+- ❌ **Critical**: Aksiyon gerekli
+
+---
+
+## 🔗 İlgili Dokümantasyon
+
+- [Examples Guide](./examples_guide.md) - Kullanım örnekleri
+- [Architecture](./architecture.md) - Mimari detayları
+- [Module Overview](./module_overview.md) - Genel bakış

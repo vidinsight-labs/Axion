@@ -11,9 +11,9 @@ import sys
 import os
 
 # Paket import'u (setup.py ile kurulmuş olmalı)
-from cpu_load_balancer import Task, Result, TaskType, TaskStatus, ExecutorType
-from cpu_load_balancer import EngineConfig
-from cpu_load_balancer import ComponentStatus, HealthStatus
+from axion import Task, Result, TaskType, TaskStatus, ExecutorType
+from axion import EngineConfig
+from axion import ComponentStatus, HealthStatus
 
 
 class TestTask:
