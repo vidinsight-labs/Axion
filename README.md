@@ -438,13 +438,8 @@ Dokümantasyonu geliştirmek için:
 
 ---
 
-## 📄 Lisans
-
-MIT License - Detaylar için ana README'ye bakın.
-
 ## ⚡ Hızlı Linkler
 
 - 📦 [PyPI Package](https://pypi.org/project/axion/) (yakında)
-- 🐛 [Issue Tracker](https://github.com/your-repo/axion/issues)
-- 💬 [Discussions](https://github.com/your-repo/axion/discussions)
+- 🐛 [Issue Tracker](https://github.com/vidinsight-labs/Axion/issues)
 - 📚 [API Reference](https://axion.readthedocs.io/) (yakında)
