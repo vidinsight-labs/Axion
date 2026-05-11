@@ -1,6 +1,6 @@
 # Config Klasörü
 
-Bu klasör, CPU Load Balancer'ın yapılandırma dosyalarını içerir.
+Bu klasör, Axion'un yapılandırma dosyalarını içerir.
 
 ## Dosyalar
 
@@ -42,17 +42,17 @@ Bu klasör, CPU Load Balancer'ın yapılandırma dosyalarını içerir.
 
 ### Varsayılan Config ile
 ```bash
-python -m cpu_load_balancer.main
+python -m axion.main
 ```
 
 ### Özel Config ile
 ```bash
-python -m cpu_load_balancer.main --config cpu_load_balancer/config/my_config.json
+python -m axion.main --config axion/config/my_config.json
 ```
 
 ### Varsayılan Config Oluştur
 ```bash
-python -m cpu_load_balancer.main --create-config
+python -m axion.main --create-config
 ```
 
 ## Örnek Config Dosyaları

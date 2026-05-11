@@ -1,6 +1,6 @@
 # Benchmark Sonuçlarını Yorumlama Kılavuzu
 
-Bu dokümantasyon, CPU Load Balancer benchmark sonuçlarının nasıl yorumlanacağını açıklar.
+Bu dokümantasyon, Axion benchmark sonuçlarının nasıl yorumlanacağını açıklar.
 
 ## Genel Bakış
 

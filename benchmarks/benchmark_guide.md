@@ -1,6 +1,6 @@
-# CPU Load Balancer - Benchmark Kılavuzu
+# Axion - Benchmark Kılavuzu
 
-Bu dokümantasyon, CPU Load Balancer için yapılması gereken benchmark'ları açıklar.
+Bu dokümantasyon, Axion için yapılması gereken benchmark'ları açıklar.
 
 ## İlgili Dokümantasyon
 

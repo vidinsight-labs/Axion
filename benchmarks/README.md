@@ -1,6 +1,6 @@
-# CPU Load Balancer - Benchmark Testleri
+# Axion - Benchmark Testleri
 
-Bu klasör, CPU Load Balancer için benchmark testlerini içerir.
+Bu klasör, Axion için benchmark testlerini içerir.
 
 ## Benchmark Testleri
 

@@ -26,7 +26,7 @@ Bu dokümantasyon, Axion'u kendi projelerinize nasıl entegre edeceğinizi ve ge
 cp -r /path/to/Axion/axion /your/project/
 
 # Veya git submodule olarak ekleyin
-git submodule add https://github.com/your-repo/axion.git axion
+git submodule add https://github.com/vidinsight-labs/axion.git axion
 ```
 
 **Seçenek 2: Python Path'e Ekleme**

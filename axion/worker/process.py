@@ -7,9 +7,12 @@ import time
 import queue
 from threading import Event
 import psutil
+import logging
 
 from ..core.enums import TaskType, ProcessMetric
 from .thread import ThreadPool
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerProcess:
@@ -88,7 +91,7 @@ class WorkerProcess:
             })
                 
             return True
-        except:
+        except Exception:
             return False
     
     def shutdown(self):
@@ -98,8 +101,10 @@ class WorkerProcess:
             if self._cmd_pipe and not self._cmd_pipe.closed:
                 try:
                     self._cmd_pipe.send({"command": "shutdown"})
-                except:
-                    pass
+                except (BrokenPipeError, OSError) as e:
+                    logger.warning(f"Failed to send shutdown command to worker {self.worker_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error during shutdown of worker {self.worker_id}: {e}")
             
             # Process'in kapanmasını bekle
             if self._process:
@@ -109,13 +114,15 @@ class WorkerProcess:
                 if self._process.is_alive():
                     self._process.terminate()
                     self._process.join(timeout=2.0)
-                    
+
                     # Hala çalışıyorsa kill et
                     if self._process.is_alive():
                         self._process.kill()
                         self._process.join(timeout=1.0)
-        except Exception:
-            pass
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"Error during process shutdown for {self.worker_id}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error shutting down process {self.worker_id}: {e}")
     
     def active_thread_count(self) -> tuple:
         """Aktif thread sayısı (yaklaşık)"""
@@ -140,6 +147,7 @@ class WorkerProcess:
             '_process': None,  # Process objesi pickle edilemez
             '_active_task_count': self._active_task_count,
             'thread_pool_queue_size': self.thread_pool_queue_size,
+            'process_metrics': self.process_metrics,
             '_cpu_id': self._cpu_id,
             '_nice_level': self._nice_level,
             '_my_queue': self._my_queue,
@@ -159,22 +167,26 @@ class WorkerProcess:
         self._process = None
         self._active_task_count = state['_active_task_count']
         self.thread_pool_queue_size = state.get('thread_pool_queue_size', multiprocessing.Value('i', 0))
+        self.process_metrics = state.get('process_metrics', multiprocessing.Array('d', len(ProcessMetric), lock=False))
         self._cpu_id = state.get('_cpu_id')
         self._nice_level = state.get('_nice_level', 0)
         self._my_queue = state.get('_my_queue')
         self._all_queues = state.get('_all_queues', [])
     
     @staticmethod
-    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, thread_pool_queue_size, cpu_id, nice_level, my_queue, all_queues, process_metrics):
+    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, thread_pool_queue_size, cpu_id, nice_level, my_queue, all_queues, process_metrics) -> None:
         """Process içinde çalışan fonksiyon"""
 
         # 1. Process Önceliğini Ayarla (Nice Value)
         # Pozitif değerler önceliği düşürür (sistemi rahatlatır)
-        if nice_level != 0:
+        # os.nice() sadece Unix'te mevcut, Windows'ta sessizce atla
+        if nice_level != 0 and hasattr(os, 'nice'):
             try:
                 os.nice(nice_level)
+            except (OSError, PermissionError) as e:
+                logger.warning(f"Failed to set nice level {nice_level} for worker {worker_id}: {e}")
             except Exception as e:
-                pass  # İzin hatası olabilir, yoksay
+                logger.error(f"Unexpected error setting nice level for worker {worker_id}: {e}")
 
         # 2. CPU Affinity Ayarla (Çekirdek Sabitleme)
         # Process'i belirli bir çekirdeğe kilitler
@@ -250,7 +262,7 @@ class WorkerProcess:
                             size = q.qsize()
                             if size > 0:
                                 other_queues.append((size, q))
-                        except:
+                        except Exception:
                             other_queues.append((1, q))
 
                 other_queues.sort(reverse=True, key=lambda x: x[0])
@@ -266,10 +278,12 @@ class WorkerProcess:
             # 3. Hala iş yoksa Pipe'ı kontrol et (Eski usul komutlar için)
             if request is None:
                 try:
-                    if cmd_pipe.poll(0.01): # Biraz bekle (CPU'yu yakmamak için)
+                    if cmd_pipe.poll(0.01):  # Biraz bekle (CPU'yu yakmamak için)
                         request = cmd_pipe.recv()
-                except:
-                    pass
+                except (BrokenPipeError, OSError, EOFError) as e:
+                    logger.debug(f"Command pipe closed or broken for worker {worker_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error polling command pipe for worker {worker_id}: {e}")
 
             # İşi işle
             if request:
@@ -278,6 +292,12 @@ class WorkerProcess:
                 if command == "execute_task":
                     task_dict = request.get("task")
                     thread_pool.submit_task(task_dict)
+
+                elif command == "add_queue":
+                    # Yeni eklenen worker'ın kuyruğunu work stealing listesine ekle
+                    new_q = request.get("queue")
+                    if new_q is not None and new_q not in all_queues:
+                        all_queues.append(new_q)
 
                 elif command == "shutdown":
                     shutdown_event.set()

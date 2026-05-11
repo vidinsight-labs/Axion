@@ -33,6 +33,10 @@ psutil>=5.9.0
 # Gerçek projelerde network işlemleri için kendi HTTP kütüphanenizi kullanabilirsiniz
 requests>=2.31.0
 
+# tensorflow: Distributed model training için (opsiyonel)
+# Sadece distributed_tf_training.py kullanılacaksa gereklidir
+tensorflow>=2.13.0
+
 # ============================================================================
 # DEVELOPMENT DEPENDENCIES (Opsiyonel)
 # ============================================================================

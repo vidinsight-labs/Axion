@@ -1,0 +1,260 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axion"
+version = "3.0.0"
+description = "Advanced task execution engine with auto-scaling and workflow management"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+keywords = [
+    "task-execution",
+    "workflow",
+    "dag",
+    "parallel-processing",
+    "multiprocessing",
+    "worker-pool",
+    "auto-scaling",
+    "distributed-computing"
+]
+authors = [
+    {name = "Yunus Emre Öztürk", email = "ghost.root371@gmail.com"}
+]
+maintainers = [
+    {name = "VidInsight Labs", email = "development@vidinsight.com.tr"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
+dependencies = [
+    "psutil>=5.9.0,<6.0.0",
+]
+
+[project.optional-dependencies]
+# Machine Learning bağımlılıkları
+ml = [
+    "tensorflow>=2.18.0,<3.0.0",
+    "numpy>=1.24.0",
+]
+
+# Geliştirme araçları
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.0.0",  # Paralel test
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "isort>=5.12.0",
+    "pylint>=3.0.0",
+]
+
+# Dokümantasyon araçları
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=1.0.0",
+]
+
+# Benchmark ve performans testleri
+benchmark = [
+    "matplotlib>=3.7.0",
+    "pandas>=2.0.0",
+]
+
+# Tüm opsiyonel bağımlılıklar
+all = [
+    "axion[ml,dev,docs,benchmark]",
+]
+
+[project.urls]
+Homepage = "https://github.com/vidinsight-labs/axion"
+Repository = "https://github.com/vidinsight-labs/axion"
+Documentation = "https://github.com/vidinsight-labs/axion/tree/main/docs"
+"Bug Tracker" = "https://github.com/vidinsight-labs/axion/issues"
+Changelog = "https://github.com/vidinsight-labs/axion/blob/main/CHANGELOG.md"
+
+# ============================================================================
+# Tool Configurations
+# ============================================================================
+
+[tool.setuptools]
+packages = ["axion"]
+
+[tool.setuptools.package-data]
+axion = ["config/*.json"]
+
+# ============================================================================
+# Black - Code Formatter
+# ============================================================================
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.mypy_cache
+  | \.pytest_cache
+  | \.tox
+  | venv
+  | build
+  | dist
+)/
+'''
+
+# ============================================================================
+# isort - Import Sorter
+# ============================================================================
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_gitignore = true
+
+# ============================================================================
+# Pytest - Test Framework
+# ============================================================================
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+    "-ra",
+    "--cov=axion",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "benchmark: marks tests as benchmark tests",
+]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+
+# ============================================================================
+# Coverage - Test Coverage
+# ============================================================================
+
+[tool.coverage.run]
+source = ["axion"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+# ============================================================================
+# Mypy - Static Type Checker
+# ============================================================================
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_optional = true
+strict_equality = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+disallow_any_generics = false
+ignore_missing_imports = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# ============================================================================
+# Pylint - Code Linter
+# ============================================================================
+
+[tool.pylint.main]
+py-version = "3.8"
+ignore = ["tests", "__pycache__", ".git"]
+jobs = 0  # Otomatik CPU sayısı
+
+[tool.pylint.messages_control]
+disable = [
+    "C0111",  # missing-docstring
+    "C0103",  # invalid-name
+    "R0903",  # too-few-public-methods
+    "R0913",  # too-many-arguments
+    "W0212",  # protected-access
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.basic]
+good-names = ["i", "j", "k", "ex", "Run", "_", "id", "T"]
+
+[tool.pylint.design]
+max-args = 10
+max-attributes = 15
+max-bool-expr = 5
+max-branches = 20
+max-locals = 25
+max-parents = 7
+max-public-methods = 25
+max-returns = 10
+max-statements = 80
+min-public-methods = 0
+
+# ============================================================================
+# Flake8 - Style Guide Enforcement (yapılandırma .flake8 dosyasında)
+# ============================================================================
+# Not: flake8 pyproject.toml'u henüz desteklemiyor, .flake8 dosyası kullanın

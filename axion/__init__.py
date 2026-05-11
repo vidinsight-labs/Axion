@@ -1,4 +1,4 @@
-"""CPU Load Balancer - Basit ve temiz task execution engine"""
+"""Axion - Gelişmiş Task Execution Engine"""
 
 from .engine import Engine
 from .config import EngineConfig
