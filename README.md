@@ -605,10 +605,8 @@ Axion'u kullandığınız için teşekkür ederiz! Geri bildirimleriniz bizim i�
 
 ---
 
-<div align="center">
+## ⚡ Hızlı Linkler
 
-**[⬆ Başa Dön](#axion)**
-
-Made with ❤️ by [VidInsight Labs](https://github.com/vidinsight-labs)
-
-</div>
+- 📦 [PyPI Package](https://pypi.org/project/axion/) (yakında)
+- 🐛 [Issue Tracker](https://github.com/vidinsight-labs/Axion/issues)
+- 📚 [API Reference](https://axion.readthedocs.io/) (yakında)
