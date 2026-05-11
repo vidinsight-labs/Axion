@@ -15,10 +15,13 @@ import multiprocessing
 from typing import List, Optional, Callable, Any
 from threading import Lock, Thread, Event
 import time
+import logging
 
 from ..core.enums import TaskType, ProcessMetric
 from ..status import ComponentStatus
 from .process import WorkerProcess
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessPool:
@@ -78,8 +81,9 @@ class ProcessPool:
         # CPU affinity için mevcut çekirdekleri al
         try:
             available_cpus = list(range(multiprocessing.cpu_count()))
-        except:
-            available_cpus = []
+        except (OSError, NotImplementedError) as e:
+            logger.warning(f"Could not detect CPU count: {e}. Using single CPU.")
+            available_cpus = [0]
             
         for i in range(self._cpu_bound_count):
             # Worker'a CPU ata (Round-robin)
@@ -194,7 +198,7 @@ class ProcessPool:
 
         return True
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Pool'u kapat"""
         self._shutdown_event.set()
         
@@ -216,7 +220,7 @@ class ProcessPool:
         
         self._started = False
     
-    def wait_for_shutdown(self, timeout: float = 10.0):
+    def wait_for_shutdown(self, timeout: float = 10.0) -> bool:
         """Tüm process'lerin kapanmasını bekler"""
         import time
         start_time = time.time()
@@ -243,7 +247,7 @@ class ProcessPool:
                 
             try:
                 available_cpus = list(range(multiprocessing.cpu_count()))
-            except:
+            except Exception:
                 available_cpus = []
             
             worker_id = f"{'cpu' if task_type == TaskType.CPU_BOUND else 'io'}-{self._worker_counter}"
@@ -272,6 +276,18 @@ class ProcessPool:
                 worker.start()
                 self._cpu_workers.append(worker)
                 self._cpu_bound_count += 1
+
+                # Mevcut CPU worker'larına yeni kuyruğu bildir
+                for existing_worker in self._cpu_workers[:-1]:
+                    try:
+                        existing_worker._cmd_pipe.send({
+                            "command": "add_queue",
+                            "queue": new_queue
+                        })
+                    except (BrokenPipeError, OSError) as e:
+                        logger.warning(f"Failed to send add_queue command to worker {existing_worker.worker_id}: {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error communicating with worker {existing_worker.worker_id}: {e}")
                 
             else:
                 self._io_queues.append(new_queue)
@@ -292,6 +308,18 @@ class ProcessPool:
                 worker.start()
                 self._io_workers.append(worker)
                 self._io_bound_count += 1
+
+                # Mevcut IO worker'larına yeni kuyruğu bildir
+                for existing_worker in self._io_workers[:-1]:
+                    try:
+                        existing_worker._cmd_pipe.send({
+                            "command": "add_queue",
+                            "queue": new_queue
+                        })
+                    except (BrokenPipeError, OSError) as e:
+                        logger.warning(f"Failed to send add_queue command to worker {existing_worker.worker_id}: {e}")
+                    except Exception as e:
+                        logger.error(f"Unexpected error communicating with worker {existing_worker.worker_id}: {e}")
                 
             return True
 
@@ -318,15 +346,17 @@ class ProcessPool:
             # Worker'a kapanma sinyali gönder
             try:
                 queue.put({"command": "shutdown"})
-            except:
-                pass
+            except (ValueError, OSError) as e:
+                logger.warning(f"Failed to send shutdown command to worker {worker.worker_id}: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error shutting down worker {worker.worker_id}: {e}")
                 
             # Worker'ın bitmesini bekleme (arka planda kapansın)
             # worker.join() yaparsak burası bloklanır, gerek yok.
             
             return True
 
-    def resize(self, task_type: TaskType, target_count: int):
+    def resize(self, task_type: TaskType, target_count: int) -> None:
         """Worker sayısını hedefe ayarlar"""
         current_count = len(self._cpu_workers) if task_type == TaskType.CPU_BOUND else len(self._io_workers)
         
@@ -356,13 +386,17 @@ class ProcessPool:
             active_tasks, queue_size, thread_pool_queue_size = worker.active_thread_count()
             try:
                 queue_size = self._cpu_queues[i].qsize() if i < len(self._cpu_queues) else 0
-            except:
+            except Exception:
                 queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
+            cpu_usage = worker.process_metrics[ProcessMetric.CPU]
+            mem_usage = worker.process_metrics[ProcessMetric.MEM]
             cpu_worker_tasks[worker_id] = {
                 "active_tasks": active_tasks,
                 "queue_size": queue_size,
                 "thread_pool_queue_size": thread_pool_queue_size,
-                "total_load": active_tasks + queue_size + thread_pool_queue_size
+                "total_load": active_tasks + queue_size + thread_pool_queue_size,
+                "cpu_usage": cpu_usage,
+                "mem_usage": mem_usage,
             }
         
         io_worker_tasks = {}
@@ -371,13 +405,17 @@ class ProcessPool:
             active_tasks, queue_size, thread_pool_queue_size = worker.active_thread_count()
             try:
                 queue_size = self._io_queues[i].qsize() if i < len(self._io_queues) else 0
-            except:
+            except Exception:
                 queue_size = 0  # qsize() bazı platformlarda çalışmayabilir
+            cpu_usage = worker.process_metrics[ProcessMetric.CPU]
+            mem_usage = worker.process_metrics[ProcessMetric.MEM]
             io_worker_tasks[worker_id] = {
                 "active_tasks": active_tasks,
                 "queue_size": queue_size,
                 "thread_pool_queue_size": thread_pool_queue_size,
-                "total_load": active_tasks + queue_size + thread_pool_queue_size
+                "total_load": active_tasks + queue_size + thread_pool_queue_size,
+                "cpu_usage": cpu_usage,
+                "mem_usage": mem_usage,
             }
         
         metrics = {

@@ -15,10 +15,13 @@ import threading
 from typing import Any, Optional, Callable, Dict
 from queue import Queue
 from threading import Event
+import logging
 
 from ..task.task import Task
 from ..task.result import Result
 from ..executer.python_executor import PythonExecutor, ExecutionContext
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadPool:
@@ -56,7 +59,7 @@ class ThreadPool:
         self._active_count = 0
         self._lock = threading.Lock()
     
-    def start(self):
+    def start(self) -> None:
         """Thread pool'u başlat"""
         for i in range(self._max_threads):
             thread = threading.Thread(
@@ -82,15 +85,17 @@ class ThreadPool:
         """Yeni görev kabul edebilir mi? (queue size < max_threads)"""
         return self._task_queue.qsize() < self._max_threads
     
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Thread pool'u kapat"""
         self._shutdown_event.set()
         # Queue'ya None ekle ki thread'ler çıksın
         for _ in self._threads:
             try:
                 self._task_queue.put(None)
-            except:
-                pass
+            except (ValueError, OSError) as e:
+                logger.warning(f"Failed to signal thread shutdown: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error during thread pool shutdown: {e}")
         
         # Thread'lerin bitmesini bekle (daha uzun timeout)
         for thread in self._threads:
@@ -142,11 +147,13 @@ class ThreadPool:
                 
                 except Exception as e:
                     # Hata durumunda failed result oluştur
-                    # Görev çalıştırılamadı, hata mesajı ile sonuç oluştur
-                    task_id = task_dict.get("task_id", "unknown")
                     result = Result.failed(
-                        task_id=task_id,
-                        error=str(e)
+                        task_id=task_dict.get("task_id", "unknown"),
+                        error=str(e),
+                        org_id=task_dict.get("org_id", ""),
+                        workflow_id=task_dict.get("workflow_id", ""),
+                        acu_id=task_dict.get("acu_id", ""),
+                        worker_id=self._worker_id,
                     )
                     self._output_queue.put(result.to_dict())
                 
@@ -160,7 +167,7 @@ class ThreadPool:
                         with self._active_task_count.get_lock():
                             self._active_task_count.value -= 1
                 
-            except:
+            except Exception:
                 # Queue timeout veya başka hata, devam et
                 pass
     

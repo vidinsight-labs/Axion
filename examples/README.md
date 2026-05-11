@@ -1,6 +1,6 @@
 # Examples - Kullanım Örnekleri
 
-Bu klasör, CPU Load Balancer'ın farklı kullanım senaryolarını gösteren örnekleri içerir.
+Bu klasör, Axion'un farklı kullanım senaryolarını gösteren örnekleri içerir.
 
 ## Dosyalar
 
@@ -11,7 +11,7 @@ Bu klasör, CPU Load Balancer'ın farklı kullanım senaryolarını gösteren ö
   - Sonuç alma
 
 - **`simple_task.py`** - Basit görev script'i
-  - CPU Load Balancer'ın çalıştırabileceği örnek script
+  - Axion'un çalıştırabileceği örnek script
   - `main(params, context)` fonksiyonu içerir
 
 ### Gelişmiş Örnekler
@@ -37,7 +37,7 @@ python3 advanced_example.py
 
 ## Script Formatı
 
-CPU Load Balancer'ın çalıştırabileceği script'ler şu formatta olmalıdır:
+Axion'un çalıştırabileceği script'ler şu formatta olmalıdır:
 
 ```python
 def main(params: dict, context) -> dict:

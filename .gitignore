@@ -42,10 +42,14 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Config (opsiyonel - eğer özel config'ler varsa)
-# cpu_load_balancer/config/*.json
-# !cpu_load_balancer/config/config.json
-
 # Examples'da oluşturulan geçici script'ler
 examples/*_task.py
 !examples/simple_task.py
+
+# Generated benchmark reports
+benchmarks/*.html
+benchmarks/*.json
+
+# Training artifacts (large files)
+data/
+models/
