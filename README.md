@@ -49,11 +49,84 @@
 ### 🎨 Gelişmiş Özellikler
 
 - ✅ **Çok Seviyeli Kuyruk Sistemi**: Worker başına ayrı kuyruklar
+- ✅ **CPU İzolasyonu**: Linux çekirdek seviyesi veya CPU affinity ile kaynak izolasyonu
+- ✅ **İzolasyon Profilleri**: Safe, balanced, performance profilleri
 - ✅ **CPU İlgisi**: Process'leri belirli CPU çekirdeklerine sabitleme
 - ✅ **Process Önceliği**: Nice seviyesi ayarlama
 - ✅ **Sonuç Önbellekleme**: FIFO sonuç önbelleği (5000 limit)
 - ✅ **Modül Önbellekleme**: Script modüllerini önbelleğe alarak hızlandırma
 - ✅ **Metrikler ve İzleme**: Hız takibi, verimlilik, gecikme metrikleri
+
+---
+
+## 🔒 CPU İzolasyonu
+
+Axion, kritik iş yükleri için **CPU izolasyonu** desteği sunar. İzolasyon, Axion worker'larını sistem processlerinden ayırarak öngörülebilir performans ve düşük gecikme sağlar.
+
+### Temel Özellikler
+
+- **🐧 Linux Kernel İzolasyonu**: Systemd + cgroup v2 ile tam izolasyon (root gerekli)
+- **💻 Affinity Fallback**: Windows/macOS ve root olmayan ortamlar için CPU affinity
+- **📊 Hazır Profiller**: Safe, balanced, performance profilleri
+- **⚙️ Custom Yapılandırma**: Manuel CPU aralığı kontrolü
+
+### İzolasyon Profilleri
+
+| Profil | Sistem CPU'ları | Axion CPU'ları | Kullanım Durumu |
+|--------|----------------|----------------|-----------------|
+| **Safe** | Daha fazla | Daha az | Sistem stabilitesi öncelikli |
+| **Balanced** | Dengeli | Dengeli | Genel amaçlı (varsayılan) |
+| **Performance** | Minimum | Maksimum | Yüksek performans gereken işler |
+| **Custom** | Manuel | Manuel | Özel gereksinimler |
+
+### Örnek Kullanım
+
+#### YAML Yapılandırması
+```yaml
+# config.yaml
+cpu_isolation:
+  enabled: true
+  profile: balanced
+  backend: auto
+```
+
+#### CLI ile
+```bash
+# Balanced profil ile izolasyon
+python -m axion.main --enable-isolation --isolation-profile balanced
+
+# Custom CPU aralıkları
+python -m axion.main --enable-isolation --system-cpus "0-1" --axion-cpus "2-7"
+```
+
+#### Python API
+```python
+from axion import Engine, EngineConfig
+from axion.config import CpuIsolationConfig
+
+config = EngineConfig(
+    cpu_bound_count=4,
+    cpu_isolation=CpuIsolationConfig(
+        enabled=True,
+        profile="balanced"
+    )
+)
+
+with Engine(config=config) as engine:
+    # İzolasyonlu engine çalışıyor
+    ...
+```
+
+### Platform Desteği
+
+| Platform | Full İzolasyon (cgroup) | Affinity Fallback |
+|----------|------------------------|-------------------|
+| Linux (systemd + cgroup v2) | ✅ (root gerekli) | ✅ |
+| Linux (diğer) | ❌ | ✅ |
+| Windows 10/11 | ❌ | ✅ |
+| macOS | ❌ | ⚠️ (sınırlı) |
+
+> **Detaylı Bilgi**: [CPU İzolasyon Rehberi](docs/cpu_isolation.md) | [Yapılandırma Referansı](axion/config/README.md)
 
 ---
 
@@ -325,11 +398,13 @@ with Engine() as engine:
 |---------|--------|
 | **[Mimari](docs/architecture.md)** | Sistem mimarisi, bileşenler, algoritmalar |
 | **[Veri Akışı](docs/data_flow.md)** | Veri akışı, kuyruk yönetimi, process iletişimi |
+| **[CPU İzolasyon](docs/cpu_isolation.md)** | CPU izolasyon rehberi, profiller, backend'ler |
 
 ### 🔧 Operasyon ve Sorun Giderme
 
 | Doküman | İçerik |
 |---------|--------|
+| **[Yapılandırma Referansı](axion/config/README.md)** | Yapılandırma parametreleri, YAML format |
 | **[Çıktı Yorumlama](docs/output_interpretation.md)** | Log mesajları, metrikler, performans analizi |
 | **[Sorun Giderme](docs/troubleshooting.md)** | Yaygın sorunlar ve çözümleri |
 

@@ -55,6 +55,21 @@ axion/
 │   ├── workflow.py            # WorkflowManager (DAG)
 │   └── backpressure.py        # BackpressureController
 │
+├── 🔒 isolation/
+│   └── cpu/
+│       ├── manager.py         # CpuIsolationManager (orchestration, cleanup)
+│       ├── factory.py         # Backend seçim factory
+│       ├── backend.py         # Abstract backend interface
+│       ├── partition_planner.py  # CPU dağılım algoritması
+│       ├── backends/
+│       │   ├── linux_cgroup.py   # Linux systemd + cgroup v2
+│       │   ├── affinity.py       # CPU affinity (psutil)
+│       │   └── noop.py           # No-op fallback
+│       └── linux/
+│           ├── detection.py   # Sistem capability detection
+│           ├── systemd.py     # Systemd unit CPU yönetimi
+│           └── cgroup_v2.py   # Cgroup v2 cpuset yönetimi
+│
 └── 📊 status.py                # ComponentStatus
 ```
 
@@ -475,6 +490,64 @@ config = EngineConfig(
   - Çok sayıda worker (CPU * 3)
   - Yüksek thread limit (20-50)
   - Nice level = 5 (düşük öncelik, CPU'yu bırakır)
+
+### CPU İzolasyon Modülü
+
+**Axion v3.0+** CPU izolasyon desteği sunar. İzolasyon modülü, worker process'lerini sistem process'lerinden ayırır.
+
+**Ana Bileşenler**:
+
+- `cpu/` - CPU izolasyon implementasyonu
+  - `manager.py` - İzolasyon manager (orchestration, cleanup)
+  - `factory.py` - Backend seçim factory
+  - `backend.py` - Abstract backend interface
+  - `partition_planner.py` - CPU dağılım algoritması
+  - `utils.py` - CPU range parsing utilities
+  - `exceptions.py` - İzolasyon hatası türleri
+
+**Backend'ler** (`cpu/backends/`):
+
+| Backend | Platform | İzolasyon Seviyesi | Root Gerekli? |
+|---------|----------|-------------------|---------------|
+| `linux_cgroup.py` | Linux | Çekirdek (cgroup v2) | Evet |
+| `affinity.py` | Tümü | Process (psutil) | Hayır* |
+| `noop.py` | Tümü | Yok (fallback) | Hayır |
+
+*Windows'ta admin önerilir
+
+**Linux Özel Araçlar** (`cpu/linux/`):
+- `detection.py` - Sistem capability detection (systemd, cgroup v2)
+- `systemd.py` - Systemd unit CPU yönetimi
+- `cgroup_v2.py` - Cgroup v2 cpuset yönetimi
+
+**Kullanım**:
+```python
+from axion import Engine, EngineConfig
+from axion.config import CpuIsolationConfig
+
+config = EngineConfig(
+    cpu_bound_count=4,
+    cpu_isolation=CpuIsolationConfig(
+        enabled=True,
+        profile="balanced"
+    )
+)
+
+with Engine(config=config) as engine:
+    # İzolasyonlu engine çalışıyor
+    pass
+```
+
+**İzolasyon Profilleri**:
+
+| Profil | Sistem CPU | Axion CPU | Kullanım |
+|--------|-----------|-----------|----------|
+| `safe` | Daha fazla | Daha az | Paylaşımlı sunucu |
+| `balanced` | Dengeli | Dengeli | Genel amaçlı (varsayılan) |
+| `performance` | Minimum | Maksimum | Dedicated sunucu |
+| `custom` | Manuel | Manuel | Özel gereksinimler |
+
+**İlgili Dokümantasyon**: [CPU İzolasyon Rehberi](cpu_isolation.md)
 
 ### Load Metrics
 

@@ -385,6 +385,326 @@ for worker in engine._pool._cpu_workers + engine._pool._io_workers:
 
 ---
 
+## CPU İzolasyon Sorunları
+
+### Sorun: "NoBackendAvailableError: No suitable isolation backend available"
+
+**Sebep:** Linux'ta root erişimi yok veya systemd/cgroup v2 eksik.
+
+**Çözüm:**
+
+**Seçenek 1: Root ile çalıştır**
+```bash
+sudo python -m axion.main --enable-isolation
+```
+
+**Seçenek 2: Affinity fallback kullan (root gereksiz)**
+```yaml
+# config.yaml
+cpu_isolation:
+  enabled: false
+  affinity_mode: auto
+```
+
+**Seçenek 3: Sistem kontrolü**
+```bash
+# Systemd var mı?
+systemctl --version
+
+# Cgroup v2 aktif mi?
+mount | grep cgroup2
+
+# Root musunuz?
+id -u  # 0 = root
+```
+
+---
+
+### Sorun: "systemd-run command failed" Hatası
+
+**Sebep:** Systemd veya cgroup v2 eksik/kapalı.
+
+**Belirti:** İzolasyon başlatılamıyor, "Command 'systemd-run' returned non-zero exit status" hatası
+
+**Çözüm:**
+
+**Adım 1: Systemd versiyonu kontrol**
+```bash
+systemctl --version
+# Minimum: systemd 226+
+```
+
+**Adım 2: Cgroup v2 kontrolü**
+```bash
+# Cgroup v2 mount edilmiş mi?
+mount | grep cgroup2
+# Beklenen: cgroup2 on /sys/fs/cgroup type cgroup2
+```
+
+**Adım 3: Cgroup v2 etkinleştir (gerekirse)**
+```bash
+# Grub ile cgroup v2'yi etkinleştir
+sudo nano /etc/default/grub
+# Ekle: GRUB_CMDLINE_LINUX="systemd.unified_cgroup_hierarchy=1"
+sudo update-grub
+sudo reboot
+```
+
+**Adım 4: Affinity fallback'e geç**
+```yaml
+# config.yaml
+cpu_isolation:
+  backend: noop          # Systemd'yi atlat
+  affinity_mode: auto    # Affinity kullan
+```
+
+---
+
+### Sorun: İzolasyon Etkin Ama Performans Düşük
+
+**Sebep:** Çok az CPU Axion'a ayrılmış.
+
+**Belirti:** 
+- Worker'lar yavaş
+- CPU kullanımı sürekli %100
+- Gecikme beklenenden yüksek
+
+**Çözüm:**
+
+**Adım 1: CPU dağılımını kontrol et**
+```bash
+# Axion loglarında ara (log_level: DEBUG)
+# Örnek log: "System CPUs: 0-5, Axion CPUs: 6-7"
+#  -> Sadece 2 CPU Axion'a (çok az!)
+python -m axion.main --log-level DEBUG --enable-isolation | grep "CPUs"
+```
+
+**Adım 2: Profili değiştir**
+```yaml
+# config.yaml
+cpu_isolation:
+  profile: performance  # balanced yerine
+```
+
+**Adım 3: Custom dağılım (daha fazla CPU)**
+```yaml
+# config.yaml
+cpu_isolation:
+  profile: custom
+  system_cpus: "0-1"     # Sadece 2 CPU sistem için
+  axion_cpus: "2-15"     # 14 CPU Axion için
+```
+
+**Adım 4: Worker sayısını ayarla**
+```yaml
+# Axion CPU sayısına uygun worker sayısı
+# axion_cpus = 2-9 (8 CPU) ise:
+cpu_bound_count: 8     # ✅ 8 worker = 8 CPU
+# cpu_bound_count: 16  # ❌ Fazla worker -> context switch
+```
+
+---
+
+### Sorun: Sistem Yanıt Vermiyor / SSH Bağlantısı Kopuyor
+
+**Sebep:** Sistem için çok az CPU kaldı (genellikle performance profil ile).
+
+**Belirti:**
+- SSH bağlantısı yavaş/kopar
+- Sistem komutları donuyor
+- top/htop yanıt vermiyor
+
+**Çözüm:**
+
+**Acil Durum - İzolasyonu Durdur:**
+```bash
+# Axion'u durdur (Ctrl+C)
+# restore_on_shutdown=true ise otomatik cleanup olur
+
+# Manuel cleanup (acil durumda):
+sudo systemctl reset-failed
+```
+
+**Kalıcı Çözüm - Profili Safe'e Çevir:**
+```yaml
+# config.yaml
+cpu_isolation:
+  profile: safe  # Sistem için daha fazla CPU
+```
+
+**Alternatif - System Slice Kısıtlamasını Kaldır:**
+```yaml
+# config.yaml
+cpu_isolation:
+  restrict_system_slices: false  # Sistem process'lerini serbest bırak
+```
+
+**CPU Dağılımını Kontrol Et:**
+```bash
+# 8 CPU sistemde performance profil:
+# system: 1 CPU, axion: 7 CPU -> Sistem için çok az!
+
+# Önerilen: balanced veya safe
+# balanced: system: 2 CPU, axion: 6 CPU
+# safe: system: 2 CPU, axion: 6 CPU
+```
+
+---
+
+### Sorun: "min_cpus_required" Uyarısı
+
+**Log Mesajı:** `"CPU isolation disabled: only X CPUs available, minimum 4 required"`
+
+**Sebep:** Sistemde 4'ten az mantıksal CPU var.
+
+**Çözüm:**
+
+**Seçenek 1: CPU sayısını kontrol et**
+```python
+import os
+print(f"CPU sayısı: {os.cpu_count()}")
+```
+
+**Seçenek 2: Minimum gereksinimi düşür (DİKKATLE!)**
+```yaml
+# config.yaml
+cpu_isolation:
+  min_cpus_required: 2  # Varsayılan: 4
+```
+⚠️ **Uyarı**: 4'ten az CPU'da izolasyon sistem stabilitesini etkileyebilir. Safe profil kullanın.
+
+**Seçenek 3: İzolasyonu kapat**
+```yaml
+# config.yaml
+cpu_isolation:
+  enabled: false
+```
+
+---
+
+### Sorun: Affinity Windows'ta Çalışmıyor
+
+**Sebep:** Windows API sınırlamaları veya yetki eksikliği.
+
+**Belirti:**
+- `PermissionError: [WinError 5] Access is denied`
+- Affinity ayarlanamıyor
+
+**Çözüm:**
+
+**Adım 1: Administrator olarak çalıştır**
+```powershell
+# PowerShell'i "Run as Administrator" ile aç
+python -m axion.main --affinity-mode auto
+```
+
+**Adım 2: Affinity CPU'larını kontrol et**
+```yaml
+# config.yaml
+cpu_isolation:
+  affinity_mode: custom
+  affinity_cpus: "0-3"  # Geçerli CPU aralığı (0 - cpu_count-1)
+```
+
+**Adım 3: Process hata mesajlarını kontrol et**
+```bash
+# DEBUG log ile detaylı hata mesajları
+python -m axion.main --log-level DEBUG --affinity-mode auto
+```
+
+**Adım 4: psutil versiyonunu kontrol et**
+```bash
+# psutil 5.9.0+ gerekli
+python -c "import psutil; print(psutil.__version__)"
+
+# Eski versiyonsa güncelle
+pip install --upgrade psutil
+```
+
+---
+
+### Sorun: "Custom profile requires manual system_cpus and axion_cpus"
+
+**Sebep:** Custom profil seçildi ama CPU aralıkları belirtilmedi.
+
+**Çözüm:**
+
+**Yanlış:**
+```yaml
+cpu_isolation:
+  profile: custom
+  system_cpus: auto    # ❌ Custom'da auto kullanılamaz
+  axion_cpus: auto     # ❌
+```
+
+**Doğru:**
+```yaml
+cpu_isolation:
+  profile: custom
+  system_cpus: "0-1"   # ✅ Manuel aralık
+  axion_cpus: "2-7"    # ✅ Manuel aralık
+```
+
+---
+
+### Debug Checklist (CPU İzolasyon)
+
+İzolasyon sorunlarını debug etmek için:
+
+```bash
+# 1. Platform kontrolü
+python -c "import platform; print(f'Platform: {platform.system()}')"
+
+# 2. CPU sayısı
+python -c "import os; print(f'CPUs: {os.cpu_count()}')"
+
+# 3. Root/Admin kontrolü
+# Linux:
+id -u  # 0 = root
+# Windows:
+net session 2>&1 | findstr /C:"Access is denied" >nul && echo Not Admin || echo Admin
+
+# 4. Systemd kontrolü (Linux)
+systemctl --version
+systemctl status
+
+# 5. Cgroup v2 kontrolü (Linux)
+mount | grep cgroup2
+ls /sys/fs/cgroup/
+
+# 6. Cgroup controllers (Linux)
+cat /sys/fs/cgroup/cgroup.controllers
+# Beklenen: cpuset cpu io memory ...
+
+# 7. psutil kurulu mu?
+python -c "import psutil; print(f'psutil: {psutil.__version__}')"
+
+# 8. Axion DEBUG log
+python -m axion.main --log-level DEBUG --enable-isolation
+
+# 9. Backend seçimini kontrol et
+# Logda ara: "Selected backend: LinuxCgroupBackend" veya "AffinityBackend"
+
+# 10. CPU dağılımını kontrol et
+# Logda ara: "System CPUs: ..., Axion CPUs: ..."
+```
+
+### CPU İzolasyon Log Mesajları
+
+| Log Mesajı | Anlam | Aksiyon |
+|------------|-------|---------|
+| `CPU isolation enabled with profile: balanced` | İzolasyon başarıyla başlatıldı | Normal |
+| `Selected backend: LinuxCgroupBackend` | Linux kernel izolasyonu aktif | En iyi performans |
+| `Selected backend: AffinityBackend` | Affinity fallback kullanılıyor | Normal (root yok/Windows/macOS) |
+| `Selected backend: NoopBackend` | İzolasyon devre dışı | İzolasyonu etkinleştir veya affinity kullan |
+| `System CPUs: 0-1, Axion CPUs: 2-7` | CPU dağılımı | Dağılımı kontrol et |
+| `Failed to create cgroup` | Cgroup oluşturulamadı | Root yetkisi/cgroup v2 kontrol et |
+| `Failed to set CPU affinity` | Affinity ayarlanamadı | Administrator yetkisi/psutil kontrol et |
+| `CPU isolation disabled: only X CPUs` | Minimum CPU yok | min_cpus_required düşür/izolasyonu kapat |
+| `Restored original systemd settings` | Cleanup başarılı | Normal shutdown |
+
+---
+
 ## Daha Fazla Yardım
 
 ### Debug Bilgisi Toplama

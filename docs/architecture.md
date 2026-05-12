@@ -8,10 +8,11 @@ Bu dokümantasyon, Axion'un mimari yapısını, bileşenlerini ve çalışma pre
 
 1. [Sistem Mimarisi](#sistem-mimarisi)
 2. [Temel Bileşenler](#temel-bileşenler)
-3. [Auto-Scaling Mekanizması](#auto-scaling-mekanizması)
-4. [Workflow Yönetimi](#workflow-yönetimi)
-5. [Work Stealing Algoritması](#work-stealing-algoritması)
-6. [Load Balancing](#load-balancing)
+3. [CPU İzolasyon Sistemi](#cpu-izolasyon-sistemi)
+4. [Auto-Scaling Mekanizması](#auto-scaling-mekanizması)
+5. [Workflow Yönetimi](#workflow-yönetimi)
+6. [Work Stealing Algoritması](#work-stealing-algoritması)
+7. [Load Balancing](#load-balancing)
 7. [Queue Yönetimi](#queue-yönetimi)
 8. [Process İletişimi](#process-iletişimi)
 
@@ -400,6 +401,224 @@ class BackpressureController:
         health = self.check_health()
         return health != SystemHealth.CRITICAL
 ```
+
+---
+
+## 🔒 CPU İzolasyon Sistemi
+
+Axion v3.0+, kritik iş yükleri için CPU izolasyon desteği sunar.
+
+### Mimari
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   CPU ISOLATION MANAGER                  │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Factory (Backend Selection)                       │ │
+│  │  - Platform detection (Linux/Windows/macOS)        │ │
+│  │  - Capability check (systemd, cgroup v2, root)     │ │
+│  │  - Backend selection logic                         │ │
+│  └────────────────────────────────────────────────────┘ │
+│                          │                               │
+│                          ▼                               │
+│  ┌────────────────────────────────────────────────────┐ │
+│  │  Backend Interface (Abstract)                      │ │
+│  └────────────────────────────────────────────────────┘ │
+│       │                  │                   │           │
+│       ▼                  ▼                   ▼           │
+│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │  Linux   │    │   Affinity   │    │     Noop     │  │
+│  │ Systemd  │    │   Backend    │    │   Backend    │  │
+│  │ + Cgroup │    │   (psutil)   │    │  (Fallback)  │  │
+│  └────┬─────┘    └──────┬───────┘    └──────────────┘  │
+│       │                  │                               │
+│       ▼                  ▼                               │
+│  ┌────────────────────────────────────┐                 │
+│  │  Partition Planner                 │                 │
+│  │  - Profile-based CPU distribution  │                 │
+│  │  - Safe/Balanced/Performance       │                 │
+│  │  - Custom range parsing            │                 │
+│  └────────────────────────────────────┘                 │
+└─────────────────────────────────────────────────────────┘
+         │                               │
+         ▼                               ▼
+┌────────────────┐            ┌──────────────────┐
+│ Linux Kernel   │            │  Process API     │
+│ (cgroup v2)    │            │  (psutil)        │
+│                │            │                  │
+│ /sys/fs/cgroup/│            │ CPU Affinity     │
+│   axion-runtime│            │ (Windows/macOS)  │
+│                │            │                  │
+│ cpuset.cpus    │            │ SetProcessAffinityMask |
+└────────────────┘            └──────────────────┘
+```
+
+### Backend Türleri
+
+#### 1. Linux Systemd + Cgroup v2 Backend
+
+**En Güçlü İzolasyon**
+
+- **Nasıl Çalışır**:
+  1. `/sys/fs/cgroup/axion-runtime` cgroup oluşturulur
+  2. `cpuset` controller ile CPU aralıkları ayarlanır
+  3. Worker process'leri bu cgroup'a taşınır
+  4. İsteğe bağlı: `system.slice`, `user.slice` kısıtlanır
+
+- **Gereksinimler**:
+  - Linux kernel 4.5+ (cgroup v2 desteği)
+  - systemd 226+
+  - Root erişimi (`sudo`)
+  - cpuset controller etkin
+
+- **Avantajlar**:
+  - Çekirdek seviyesi izolasyon
+  - Sistem slice'larını kısıtlayabilme
+  - Context switch azaltma
+  - Cache locality iyileştirme
+
+- **Sınırlamalar**:
+  - Sadece Linux
+  - Root gerekli
+
+#### 2. CPU Affinity Backend
+
+**Çapraz Platform Fallback**
+
+- **Nasıl Çalışır**:
+  1. `psutil` ile worker process ID'leri alınır
+  2. `cpu_affinity()` API ile CPU maskeleme yapılır
+  3. Her worker belirtilen CPU'larda çalışır
+
+- **Gereksinimler**:
+  - `psutil` library
+  - Admin/root önerilir (Windows'ta zorunlu)
+
+- **Avantajlar**:
+  - Linux, Windows, macOS desteği
+  - Root gereksiz (Linux'ta)
+  - Basit implementasyon
+
+- **Sınırlamalar**:
+  - Process seviyesi izolasyon (daha zayıf)
+  - Sistem process'lerini etkileyemez
+  - macOS API kısıtlamaları
+
+#### 3. Noop Backend
+
+**İzolasyon Devre Dışı**
+
+- Hiçbir izolasyon yapmaz
+- Fallback modu (hata durumunda)
+- `fail_on_error=False` ise otomatik geçiş
+
+### CPU Dağılım Algoritması (Partition Planner)
+
+```python
+def calculate_partition(total_cpus, profile):
+    if profile == "safe":
+        system_cpus = max(2, total_cpus // 4)
+    elif profile == "balanced":
+        system_cpus = max(1, total_cpus // 6)
+    elif profile == "performance":
+        system_cpus = max(1, total_cpus // 8)
+    
+    axion_cpus = total_cpus - system_cpus
+    
+    return (
+        f"0-{system_cpus-1}",  # system_cpus
+        f"{system_cpus}-{total_cpus-1}"  # axion_cpus
+    )
+```
+
+**Örnekler**:
+
+| Toplam CPU | Safe | Balanced | Performance |
+|------------|------|----------|-------------|
+| 4 | 1 / 3 | 1 / 3 | 1 / 3 |
+| 8 | 2 / 6 | 2 / 6 | 1 / 7 |
+| 16 | 4 / 12 | 3 / 13 | 2 / 14 |
+| 32 | 8 / 24 | 6 / 26 | 4 / 28 |
+| 64 | 16 / 48 | 11 / 53 | 8 / 56 |
+
+### Backend Seçim Mantığı
+
+```python
+def select_backend(config):
+    if not config.enabled:
+        return NoopBackend()
+    
+    if config.backend == "noop":
+        return NoopBackend()
+    
+    if config.backend == "linux_systemd_cgroup":
+        return LinuxCgroupBackend()
+    
+    # Auto selection
+    if is_linux() and has_systemd() and has_cgroup_v2() and is_root():
+        return LinuxCgroupBackend()
+    elif config.affinity_mode != "disabled":
+        return AffinityBackend()
+    else:
+        return NoopBackend()
+```
+
+### Signal Handling ve Cleanup
+
+```python
+# Manager'da signal handling
+signal.signal(signal.SIGINT, self._signal_handler)
+signal.signal(signal.SIGTERM, self._signal_handler)
+
+def _signal_handler(self, sig, frame):
+    # Graceful cleanup
+    if self.config.restore_on_shutdown:
+        self.backend.restore_original_state()
+    self.backend.cleanup()
+```
+
+### Entegrasyon Noktaları
+
+**Engine Integration**:
+```python
+# axion/engine/engine.py
+if config.cpu_isolation.enabled:
+    self.isolation_manager = CpuIsolationManager(config.cpu_isolation)
+    self.isolation_manager.initialize()
+```
+
+**ProcessPool Integration**:
+```python
+# axion/worker/pool.py
+def add_worker(self, process):
+    if self.isolation_manager:
+        self.isolation_manager.add_worker(process.pid)
+```
+
+### Performans İyileştirmeleri
+
+1. **Cache Locality**: CPU'lar sabit tutularak L1/L2 cache hit rate artar
+2. **Context Switch Azaltma**: Kernel, process'leri aynı CPU'da tutar
+3. **Öngörülebilir Gecikme**: Sistem interrupt'ları izole edilir
+4. **Yük İzolasyonu**: Sistem yükü Axion'u etkilemez
+
+### Sınırlamalar ve Dikkat Edilecekler
+
+- ⚠️ **Minimum CPU**: En az 4 mantıksal CPU önerilir
+- ⚠️ **Root Erişimi**: Linux cgroup için sudo gerekli
+- ⚠️ **Sistem Stabilitesi**: Performance profil sistem için çok az CPU bırakabilir
+- ⚠️ **Hibernate/Suspend**: Cgroup ayarları geri yüklenebilir
+- ⚠️ **Diğer Cgroup'lar**: Mevcut cgroup yapılandırmaları ile çakışabilir
+
+### İlgili Dosyalar
+
+- `/axion/isolation/cpu/manager.py` - İzolasyon manager
+- `/axion/isolation/cpu/factory.py` - Backend factory
+- `/axion/isolation/cpu/backends/` - Backend implementasyonları
+- `/axion/isolation/cpu/partition_planner.py` - CPU dağılım algoritması
+- `/axion/config/cpu_isolation_config.py` - Konfigürasyon
+
+**Detaylı bilgi**: [CPU İzolasyon Rehberi](cpu_isolation.md)
 
 ---
 
