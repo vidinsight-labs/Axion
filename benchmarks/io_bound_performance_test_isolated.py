@@ -62,6 +62,15 @@ def build_isolation_config(mode: str, profile: str) -> CpuIsolationConfig:
     )
 
 
+def _attr(obj, name, default=None):
+    """dict veya dataclass farketmeden alan oku."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 def print_isolation_status(engine: Engine, header: str = "Isolation status"):
     print(f"\n[{header}]")
     mgr = getattr(engine, "_isolation_manager", None)
@@ -78,21 +87,21 @@ def print_isolation_status(engine: Engine, header: str = "Isolation status"):
     print(f"   config_backend: {status.get('config_backend')}")
     print(f"   affinity_mode:  {status.get('affinity_mode')}")
 
-    partition = status.get("partition") or {}
-    if partition:
+    partition = status.get("partition")
+    if partition is not None:
         print(
-            f"   partition: enabled={partition.get('enabled')} "
-            f"profile={partition.get('profile')} "
-            f"system_cpus={partition.get('system_cpus')} "
-            f"axion_cpus={partition.get('axion_cpus')}"
+            f"   partition: enabled={_attr(partition, 'enabled')} "
+            f"profile={_attr(partition, 'profile')} "
+            f"system_cpus={_attr(partition, 'system_cpus')} "
+            f"axion_cpus={_attr(partition, 'axion_cpus')}"
         )
 
-    outcome = status.get("outcome") or {}
-    if outcome:
+    outcome = status.get("outcome")
+    if outcome is not None:
         print(
-            f"   outcome: backend={outcome.get('backend_name')} "
-            f"active={outcome.get('active')} "
-            f"reason={outcome.get('reason')}"
+            f"   outcome: backend={_attr(outcome, 'backend_name')} "
+            f"active={_attr(outcome, 'active')} "
+            f"reason={_attr(outcome, 'reason')}"
         )
 
 
@@ -101,8 +110,8 @@ def _isolation_active(engine: Engine) -> bool:
     if not mgr:
         return False
     try:
-        outcome = (mgr.status() or {}).get("outcome") or {}
-        return bool(outcome.get("active"))
+        outcome = mgr.status().get("outcome")
+        return bool(_attr(outcome, "active", False))
     except Exception:
         return False
 
