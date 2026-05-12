@@ -1,0 +1,73 @@
+# engine.yaml
+
+# Queue ayarları
+input_queue_size: 1000
+output_queue_size: 10000
+
+# Worker ayarları
+cpu_bound_count: 3
+io_bound_count: null
+
+cpu_bound_task_limit: 1
+io_bound_task_limit: 20
+
+# Genel ayarlar
+log_level: INFO
+queue_poll_timeout: 1.0
+
+# CPU izolasyon / affinity ayarları
+cpu_isolation:
+  # true:
+  #   Linux systemd + cgroup v2 izolasyonu aktif olur.
+  # false:
+  #   Cgroup izolasyonu kapalı olur.
+  enabled: false
+
+  # auto | linux_systemd_cgroup | noop
+  backend: auto
+
+  # safe | balanced | performance | custom
+  profile: balanced
+
+  # Cgroup isolation için CPU aralıkları.
+  # auto ise profile'a göre hesaplanır.
+  #
+  # Örnek:
+  # system_cpus: "0-1"
+  # axion_cpus: "2-7"
+  system_cpus: auto
+  axion_cpus: auto
+
+  # true ise system.slice / user.slice / init.scope
+  # system_cpus alanına kısıtlanır.
+  restrict_system_slices: true
+
+  # true ise engine kapanınca eski systemd CPU ayarları restore edilir.
+  restore_on_shutdown: true
+
+  # Axion worker processlerinin taşınacağı cgroup path'i.
+  cgroup_root: /sys/fs/cgroup/axion-runtime
+
+  # Bu sayıdan az logical CPU varsa izolasyon devreye girmez.
+  min_cpus_required: 4
+
+  # true:
+  #   İzolasyon başarısız olursa engine hata verir.
+  # false:
+  #   Warning verip izolasyonsuz devam eder.
+  fail_on_error: false
+
+  # Affinity fallback ayarları
+  #
+  # Sadece enabled: false iken uygulanır.
+  # enabled: true iken cgroup isolation kullanılır,
+  # affinity uygulanmaz.
+  #
+  # disabled | auto | custom
+  affinity_mode: disabled
+
+  # affinity_mode: custom ise manuel CPU aralığı verilir.
+  #
+  # Örnek:
+  # affinity_cpus: "2-3"
+  affinity_cpus: auto

@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 import multiprocessing
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from threading import Lock, Thread
 
 from ..config import EngineConfig
@@ -30,6 +30,9 @@ from ..worker.pool import ProcessPool
 from ..status import ComponentStatus
 from ..core.backpressure import BackpressureController, SystemHealth
 from ..core.workflow import WorkflowManager
+
+if TYPE_CHECKING:
+    from ..isolation import CpuIsolationManager
 
 
 class Engine:
@@ -48,14 +51,36 @@ class Engine:
     - Graceful shutdown: Güvenli kapanma
     """
     
-    def __init__(self, config: Optional[EngineConfig] = None):
+    def __init__(
+        self,
+        config: Optional[EngineConfig] = None,
+        isolation_manager: Optional["CpuIsolationManager"] = None,
+    ):
         """
         Engine'i başlatır
-        
+
         Args:
             config: Engine yapılandırması (opsiyonel, varsayılan kullanılır)
+            isolation_manager: Dışarıdan verilen CPU isolation manager.
+                - Verilirse: Engine sadece kullanır; start/stop sorumluluğu çağıranındır.
+                - None + config.cpu_isolation.enabled=True: Engine kendi manager'ını
+                  yaratır ve yaşam döngüsünü (start/stop) kendisi yönetir.
+                - None + config.cpu_isolation.enabled=False: izolasyon devre dışı.
         """
         self._config = config or EngineConfig()
+        self._isolation_manager = isolation_manager
+        # Manager sahipliği: True ise start/stop bu Engine'in sorumluluğunda.
+        self._owns_isolation_manager = False
+
+        if self._isolation_manager is None and self._config.cpu_isolation.enabled:
+            try:
+                from ..isolation import CpuIsolationManager
+                self._isolation_manager = CpuIsolationManager(self._config.cpu_isolation)
+                self._owns_isolation_manager = True
+            except ImportError:
+                # isolation modülü import edilemiyorsa sessizce atla;
+                # logger henüz oluşmamış olabilir.
+                self._isolation_manager = None
         
         # Logger: Sistem mesajları için
         logging.basicConfig(level=getattr(logging, self._config.log_level))
@@ -111,6 +136,13 @@ class Engine:
             if self._started:
                 raise EngineError("Engine zaten başlatılmış", code="ENG001")
 
+            # Isolation manager start: Pool'dan önce çalışmalı (cgroup hazır olsun)
+            if self._owns_isolation_manager and self._isolation_manager:
+                try:
+                    self._isolation_manager.start()
+                except Exception as e:
+                    self._logger.warning(f"CPU isolation start failed: {e}")
+
             # Queue'ları oluştur: Görevler ve sonuçlar için
             self._input_queue = InputQueue(maxsize=self._config.input_queue_size)
             self._output_queue = OutputQueue(maxsize=self._config.output_queue_size)
@@ -123,6 +155,8 @@ class Engine:
                 io_bound_count=self._config.io_bound_count,
                 cpu_task_limit=self._config.cpu_bound_task_limit,
                 io_task_limit=self._config.io_bound_task_limit,
+                isolation_config=self._config.cpu_isolation,
+                isolation_manager=self._isolation_manager,
                 executor_func=None  # Process içinde oluşturulacak
             )
             self._process_pool.start()
@@ -165,6 +199,14 @@ class Engine:
             # Process'lerin tamamen kapanmasını bekle
             if self._process_pool:
                 self._process_pool.wait_for_shutdown(timeout=10.0)
+
+            # Isolation manager stop: yalnızca biz sahibiysek (Axion'dan inject
+            # edildiyse stop sorumluluğu çağırana aittir).
+            if self._owns_isolation_manager and self._isolation_manager:
+                try:
+                    self._isolation_manager.stop()
+                except Exception as e:
+                    self._logger.warning(f"CPU isolation stop failed: {e}")
 
             self._started = False
             self._logger.info("Engine kapatıldı")

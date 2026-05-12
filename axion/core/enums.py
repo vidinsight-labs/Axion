@@ -20,7 +20,7 @@ class TaskType(Enum):
     - IO_BOUND: IO yoğun görevler (dosya, ağ, veritabanı)
     """
     CPU_BOUND = "cpu_bound"  # CPU yoğun görevler
-    IO_BOUND = "io_bound"    # IO yoğun görevler
+    IO_BOUND = "io_bound"  # IO yoğun görevler
 
 
 class TaskStatus(Enum):
@@ -35,10 +35,10 @@ class TaskStatus(Enum):
     - FAILED: Görev başarısız oldu
     - CANCELLED: Görev iptal edildi
     """
-    PENDING = "pending"      # Beklemede
-    RUNNING = "running"       # Çalışıyor
+    PENDING = "pending"  # Beklemede
+    RUNNING = "running"  # Çalışıyor
     COMPLETED = "completed"  # Tamamlandı
-    FAILED = "failed"        # Başarısız
+    FAILED = "failed"  # Başarısız
     CANCELLED = "cancelled"  # İptal edildi
 
 

@@ -50,13 +50,17 @@ class WorkerProcess:
         self._process: Optional[multiprocessing.Process] = None
         # Event pickle edilemez, process içinde oluşturulacak
         self._child_pipe = child_pipe
-        
+
         # Shared counter for active tasks
         self._active_task_count = multiprocessing.Value('i', 0)
         # Shared counter for ThreadPool queue size
         self.thread_pool_queue_size = multiprocessing.Value('i', 0)
 
         self.process_metrics = multiprocessing.Array('d', len(ProcessMetric), lock=False)
+
+        # Worker bootstrap tamamlandığında child process tarafından set edilir;
+        # parent bu sinyali bekleyerek PID üzerinden isolation kaydı yapar.
+        self._ready_event = multiprocessing.Event()
 
     def start(self):
         """Process'i başlat"""
@@ -76,11 +80,16 @@ class WorkerProcess:
                 self._nice_level,
                 self._my_queue,
                 self._all_queues,
-                self.process_metrics
+                self.process_metrics,
+                self._ready_event
             )
         )
         process.start()
         self._process = process
+
+    def wait_ready(self, timeout: float = 5.0) -> bool:
+        """Worker bootstrap'ının tamamlanmasını bekler. Manager kaydı için PID kararlı olur."""
+        return self._ready_event.wait(timeout)
     
     def submit_task(self, task: Any) -> bool:
         """Görev gönder"""
@@ -132,6 +141,9 @@ class WorkerProcess:
         """Yükü artır (Main process'ten çağrılır)"""
         with self._active_task_count.get_lock():
             self._active_task_count.value += 1
+
+    def get_pid(self) -> int:
+        return self._process.pid
     
     def __getstate__(self):
         """Pickle için state - sadece pickle edilebilir değerleri döndür"""
@@ -174,30 +186,24 @@ class WorkerProcess:
         self._all_queues = state.get('_all_queues', [])
     
     @staticmethod
-    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, thread_pool_queue_size, cpu_id, nice_level, my_queue, all_queues, process_metrics) -> None:
+    def _run_process(cmd_pipe, output_queue, executor_func, max_threads, worker_id, active_task_count, thread_pool_queue_size, cpu_id, nice_level, my_queue, all_queues, process_metrics, ready_event) -> None:
         """Process içinde çalışan fonksiyon"""
 
         # 1. Process Önceliğini Ayarla (Nice Value)
         # Pozitif değerler önceliği düşürür (sistemi rahatlatır)
         # os.nice() sadece Unix'te mevcut, Windows'ta sessizce atla
+
         if nice_level != 0 and hasattr(os, 'nice'):
             try:
-                os.nice(nice_level)
+                pid = os.getpid()
+                psutil.Process(pid).nice(nice_level)
             except (OSError, PermissionError) as e:
                 logger.warning(f"Failed to set nice level {nice_level} for worker {worker_id}: {e}")
             except Exception as e:
                 logger.error(f"Unexpected error setting nice level for worker {worker_id}: {e}")
 
-        # 2. CPU Affinity Ayarla (Çekirdek Sabitleme)
-        # Process'i belirli bir çekirdeğe kilitler
-        if cpu_id is not None and hasattr(os, 'sched_setaffinity'):
-            try:
-                os.sched_setaffinity(0, {cpu_id})
-            except Exception as e:
-                pass  # Desteklenmiyor veya hata, yoksay
-
-        # executor_func None ise, process içinde oluştur
-        # Event'i de burada oluştur (pickle sorunu için)
+        # CPU affinity parent süreçten AffinityBackend / cgroup yoluyla uygulanır;
+        # worker tarafında tekrar pinleme gerekmiyor.
 
         thread_pool = ThreadPool(
             max_threads=max_threads,
@@ -213,6 +219,9 @@ class WorkerProcess:
 
         proc = psutil.Process(os.getpid())
         proc.cpu_percent(None)
+
+        # Bootstrap tamamlandı — parent bu sinyali bekleyerek izolasyon kaydı yapar.
+        ready_event.set()
 
         last_metrics_update = 0.0
         metrics_interval = 1.0

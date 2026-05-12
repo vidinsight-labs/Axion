@@ -2,13 +2,13 @@
 
 # Axion
 
-**Gelişmiş Task Execution Engine**
+**Gelişmiş Görev Yürütme Motoru**
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Python Versiyonu](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![Lisans](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Kod Stili: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-*Yüksek performanslı, otomatik ölçeklenen, workflow destekli paralel işlem motoru*
+*Yüksek performanslı, otomatik ölçeklenen, iş akışı destekli paralel işlem motoru*
 
 [Hızlı Başlangıç](#-hızlı-başlangıç) •
 [Özellikler](#-temel-özellikler) •
@@ -22,38 +22,38 @@
 
 ## 🎯 Nedir?
 
-**Axion**, Python için geliştirilmiş, production-ready bir **Task Execution Engine**'dir. CPU-bound ve IO-bound işlemleri optimize eden, otomatik ölçeklenen worker pool'ları ve DAG tabanlı workflow desteği ile karmaşık paralel işlemleri basitleştirir.
+**Axion**, Python için geliştirilmiş, production-ready bir **Görev Yürütme Motoru**'dur. CPU-yoğun ve IO-yoğun işlemleri optimize eden, otomatik ölçeklenen worker havuzları ve DAG tabanlı iş akışı desteği ile karmaşık paralel işlemleri basitleştirir.
 
 ### Neden Axion?
 
-- 🚀 **Yüksek Performans**: Work-stealing algoritması ve intelligent load balancing
+- 🚀 **Yüksek Performans**: Work-stealing algoritması ve akıllı yük dengeleme
 - 🔄 **Otomatik Ölçekleme**: Sistem yüküne göre worker'ları dinamik olarak yönetir
-- 📊 **Workflow Desteği**: DAG tabanlı görev bağımlılıkları ve veri aktarımı
-- 💪 **Production Ready**: Kapsamlı hata yönetimi, logging ve monitoring
-- 🎛️ **Esnek Yapılandırma**: CPU/IO ayrımı, queue boyutları, backpressure kontrolü
+- 📊 **İş Akışı Desteği**: DAG tabanlı görev bağımlılıkları ve veri aktarımı
+- 💪 **Production Hazır**: Kapsamlı hata yönetimi, loglama ve izleme
+- 🎛️ **Esnek Yapılandırma**: CPU/IO ayrımı, kuyruk boyutları, arka basınç kontrolü
 
 ---
 
 ## ✨ Temel Özellikler
 
-### 🔥 Core Features
+### 🔥 Çekirdek Özellikler
 
 | Özellik | Açıklama |
 |---------|----------|
-| **CPU/IO Ayrımı** | CPU-intensive ve IO-intensive işleri ayrı havuzlarda optimize eder |
-| **Auto-Scaling** | Sistem yüküne ve queue durumuna göre otomatik worker ekleme/çıkarma |
-| **Work Stealing** | Boş worker'lar yüklü worker'lardan görev çalarak load balancing sağlar |
-| **Workflow (DAG)** | Görevler arası bağımlılıklar ve otomatik veri aktarımı |
-| **Backpressure** | Sistem aşırı yüklüyken akıllı görev reddi ve throttling |
+| **CPU/IO Ayrımı** | CPU-yoğun ve IO-yoğun işleri ayrı havuzlarda optimize eder |
+| **Otomatik Ölçekleme** | Sistem yüküne ve kuyruk durumuna göre otomatik worker ekleme/çıkarma |
+| **Work Stealing** | Boş worker'lar yüklü worker'lardan görev çalarak yük dengeleme sağlar |
+| **İş Akışı (DAG)** | Görevler arası bağımlılıklar ve otomatik veri aktarımı |
+| **Arka Basınç** | Sistem aşırı yüklüyken akıllı görev reddi ve kısıtlama |
 
-### 🎨 Advanced Features
+### 🎨 Gelişmiş Özellikler
 
-- ✅ **Multi-level Queue System**: Sharded queues per worker
-- ✅ **CPU Affinity**: Process'leri belirli CPU core'larına sabitleme
-- ✅ **Process Priority**: Nice level ayarlama
-- ✅ **Result Caching**: FIFO result cache (5000 limit)
-- ✅ **Module Caching**: Script module'lerini cache'leyerek hızlandırma
-- ✅ **Metrics & Monitoring**: Velocity tracking, throughput, latency metrikleri
+- ✅ **Çok Seviyeli Kuyruk Sistemi**: Worker başına ayrı kuyruklar
+- ✅ **CPU İlgisi**: Process'leri belirli CPU çekirdeklerine sabitleme
+- ✅ **Process Önceliği**: Nice seviyesi ayarlama
+- ✅ **Sonuç Önbellekleme**: FIFO sonuç önbelleği (5000 limit)
+- ✅ **Modül Önbellekleme**: Script modüllerini önbelleğe alarak hızlandırma
+- ✅ **Metrikler ve İzleme**: Hız takibi, verimlilik, gecikme metrikleri
 
 ---
 
@@ -68,7 +68,7 @@
 ### Hızlı Kurulum
 
 ```bash
-# Repository'yi klonlayın
+# Depoyu klonlayın
 git clone https://github.com/vidinsight-labs/axion.git
 cd axion
 
@@ -79,7 +79,7 @@ pip install -e .
 ### Opsiyonel Bağımlılıklar
 
 ```bash
-# Machine Learning özellikleri (TensorFlow)
+# Makine öğrenimi özellikleri (TensorFlow)
 pip install -e ".[ml]"
 
 # Geliştirme araçları (pytest, black, mypy, vb.)
@@ -88,7 +88,7 @@ pip install -e ".[dev]"
 # Dokümantasyon araçları (Sphinx)
 pip install -e ".[docs]"
 
-# Benchmark araçları (matplotlib, pandas)
+# Performans test araçları (matplotlib, pandas)
 pip install -e ".[benchmark]"
 
 # Tümünü yükle
@@ -111,7 +111,7 @@ pip install psutil>=5.9.0
 ```python
 from axion import Engine, Task, TaskType
 
-# Engine'i başlat
+# Motor'u başlat
 with Engine() as engine:
     # Görev oluştur
     task = Task.create(
@@ -132,7 +132,7 @@ with Engine() as engine:
         print(f"❌ Hata: {result.error if result else 'Timeout'}")
 ```
 
-### Task Script Formatı
+### Görev Script Formatı
 
 ```python
 # my_script.py
@@ -151,7 +151,7 @@ def main(params, context):
     result = value * 2
     
     # Worker bilgisini kullanabilirsiniz
-    print(f"Task {context.task_id} running on {context.worker_id}")
+    print(f"Görev {context.task_id}, {context.worker_id} üzerinde çalışıyor")
     
     return {
         "result": result,
@@ -163,7 +163,7 @@ def main(params, context):
 
 ## 💡 Kullanım Örnekleri
 
-### 1. CPU-Bound ve IO-Bound Görevler
+### 1. CPU-Yoğun ve IO-Yoğun Görevler
 
 ```python
 from axion import Engine, EngineConfig, Task, TaskType
@@ -177,14 +177,14 @@ config = EngineConfig(
 )
 
 with Engine(config) as engine:
-    # CPU-bound görev (hesaplama yoğun)
+    # CPU-yoğun görev (hesaplama yoğun)
     cpu_task = Task.create(
         script_path="heavy_computation.py",
         params={"n": 1000000},
         task_type=TaskType.CPU_BOUND
     )
     
-    # IO-bound görev (network, dosya işlemleri)
+    # IO-yoğun görev (ağ, dosya işlemleri)
     io_task = Task.create(
         script_path="download_file.py",
         params={"url": "https://example.com/data.json"},
@@ -200,20 +200,20 @@ with Engine(config) as engine:
     io_result = engine.get_result(io_id)
 ```
 
-### 2. Workflow (DAG) Kullanımı
+### 2. İş Akışı (DAG) Kullanımı
 
 ```python
 from axion import Engine, Task, TaskType
 
 with Engine() as engine:
-    # Task A: Veri yükle
+    # Görev A: Veri yükle
     task_a = Task.create(
         script_path="load_data.py",
         params={"source": "data.csv"},
         task_type=TaskType.IO_BOUND
     )
     
-    # Task B: Veriyi işle (A'ya bağımlı)
+    # Görev B: Veriyi işle (A'ya bağımlı)
     task_b = Task.create(
         script_path="process_data.py",
         params={"operation": "transform"},
@@ -221,7 +221,7 @@ with Engine() as engine:
         dependencies=[task_a.id]  # A tamamlanınca başla
     )
     
-    # Task C: Sonucu kaydet (B'ye bağımlı)
+    # Görev C: Sonucu kaydet (B'ye bağımlı)
     task_c = Task.create(
         script_path="save_result.py",
         params={"output": "result.json"},
@@ -229,7 +229,7 @@ with Engine() as engine:
         dependencies=[task_b.id]  # B tamamlanınca başla
     )
     
-    # Workflow olarak gönder
+    # İş akışı olarak gönder
     task_ids = engine.submit_workflow([task_a, task_b, task_c])
     
     # Otomatik akış:
@@ -241,7 +241,7 @@ with Engine() as engine:
     final_result = engine.get_result(task_c.id, timeout=60)
 ```
 
-### 3. Batch İşlemler
+### 3. Toplu İşlemler
 
 ```python
 from axion import Engine, Task, TaskType
@@ -270,7 +270,7 @@ with Engine() as engine:
     print(f"✅ {len(results)}/100 görev başarılı")
 ```
 
-### 4. Status Monitoring
+### 4. Durum İzleme
 
 ```python
 from axion import Engine
@@ -279,13 +279,13 @@ import time
 with Engine() as engine:
     # Görevleri gönder...
     
-    # Status'u periyodik kontrol et
+    # Durumu periyodik kontrol et
     while True:
         status = engine.get_status()
         
         print(f"""
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        Workers:
+        Worker'lar:
           CPU: {status.cpu_workers} (aktif: {status.cpu_active_threads})
           IO:  {status.io_workers} (aktif: {status.io_active_threads})
         
@@ -296,8 +296,8 @@ with Engine() as engine:
           Başarısız:   {status.failed_tasks}
         
         Sistem:
-          Backpressure: {status.backpressure_state}
-          Throughput:   {status.throughput:.2f} görev/s
+          Arka Basınç: {status.backpressure_state}
+          Verimlilik:  {status.throughput:.2f} görev/s
         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         """)
         
@@ -315,30 +315,30 @@ with Engine() as engine:
 
 | Doküman | İçerik |
 |---------|--------|
-| **[Module Overview](docs/module_overview.md)** | Axion'a genel bakış, temel kavramlar, hızlı başlangıç |
-| **[Examples Guide](docs/examples_guide.md)** | Detaylı kullanım örnekleri, best practices |
-| **[Integration Guide](docs/integration_guide.md)** | Mevcut projelere entegrasyon, gerçek senaryolar |
+| **[Modül Özeti](docs/module_overview.md)** | Axion'a genel bakış, temel kavramlar, hızlı başlangıç |
+| **[Örnek Kılavuzu](docs/examples_guide.md)** | Detaylı kullanım örnekleri, en iyi uygulamalar |
+| **[Entegrasyon Kılavuzu](docs/integration_guide.md)** | Mevcut projelere entegrasyon, gerçek senaryolar |
 
 ### 🏗️ Mimari ve İç Yapı
 
 | Doküman | İçerik |
 |---------|--------|
-| **[Architecture](docs/architecture.md)** | Sistem mimarisi, bileşenler, algoritmalar |
-| **[Data Flow](docs/data_flow.md)** | Veri akışı, queue yönetimi, process iletişimi |
+| **[Mimari](docs/architecture.md)** | Sistem mimarisi, bileşenler, algoritmalar |
+| **[Veri Akışı](docs/data_flow.md)** | Veri akışı, kuyruk yönetimi, process iletişimi |
 
-### 🔧 Operasyon ve Troubleshooting
-
-| Doküman | İçerik |
-|---------|--------|
-| **[Output Interpretation](docs/output_interpretation.md)** | Log mesajları, metrikler, performans analizi |
-| **[Troubleshooting](docs/troubleshooting.md)** | Yaygın sorunlar ve çözümleri |
-
-### 📊 Demo ve Benchmark
+### 🔧 Operasyon ve Sorun Giderme
 
 | Doküman | İçerik |
 |---------|--------|
-| **[Demo Guide](docs/demo_guide.md)** | Demo senaryoları, örnek projeler |
-| **[Benchmark Guide](benchmarks/benchmark_guide.md)** | Performans testleri, benchmark sonuçları |
+| **[Çıktı Yorumlama](docs/output_interpretation.md)** | Log mesajları, metrikler, performans analizi |
+| **[Sorun Giderme](docs/troubleshooting.md)** | Yaygın sorunlar ve çözümleri |
+
+### 📊 Demo ve Performans Testi
+
+| Doküman | İçerik |
+|---------|--------|
+| **[Demo Kılavuzu](docs/demo_guide.md)** | Demo senaryoları, örnek projeler |
+| **[Performans Testi Kılavuzu](benchmarks/benchmark_guide.md)** | Performans testleri, test sonuçları |
 
 ---
 
@@ -350,15 +350,15 @@ with Engine() as engine:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Engine                                         │
-│  ├─ CPU Workers (Processes)                     │
-│  │  ├─ Process 1 → ThreadPool (N threads)      │
-│  │  ├─ Process 2 → ThreadPool (N threads)      │
-│  │  └─ Process 3 → ThreadPool (N threads)      │
+│  Motor (Engine)                                 │
+│  ├─ CPU Worker'ları (Process'ler)              │
+│  │  ├─ Process 1 → Thread Havuzu (N thread)   │
+│  │  ├─ Process 2 → Thread Havuzu (N thread)   │
+│  │  └─ Process 3 → Thread Havuzu (N thread)   │
 │  │                                               │
-│  └─ IO Workers (Processes)                      │
-│     ├─ Process 1 → ThreadPool (M threads)      │
-│     └─ Process 2 → ThreadPool (M threads)      │
+│  └─ IO Worker'ları (Process'ler)               │
+│     ├─ Process 1 → Thread Havuzu (M thread)   │
+│     └─ Process 2 → Thread Havuzu (M thread)   │
 └─────────────────────────────────────────────────┘
 
 Process Sayısı = Çekirdek Kullanımı
@@ -368,15 +368,15 @@ Thread Sayısı = Eşzamanlı İşlem Kapasitesi
 **Kritik Noktalar:**
 - ⚠️ **1 worker = 1 process = 1 CPU çekirdeği**
 - ✅ **Thread'ler process içinde çalışır (hafif, ucuz)**
-- 🎯 **CPU-bound**: Az process, az thread (çekirdek başına 1)
-- 🎯 **IO-bound**: Az process, çok thread (IO beklerken thread ucuz)
+- 🎯 **CPU-yoğun**: Az process, az thread (çekirdek başına 1)
+- 🎯 **IO-yoğun**: Az process, çok thread (IO beklerken thread ucuz)
 
 **Örnek Hesaplama (8 çekirdekli CPU):**
 ```python
 config = EngineConfig(
     cpu_bound_count=4,        # 4 çekirdek
     io_bound_count=2,         # 2 çekirdek
-    # Toplam: 6 çekirdek (2 çekirdek reserve)
+    # Toplam: 6 çekirdek (2 çekirdek rezerv)
     
     cpu_bound_task_limit=1,   # 4 × 1 = 4 eşzamanlı CPU görevi
     io_bound_task_limit=25    # 2 × 25 = 50 eşzamanlı IO görevi
@@ -395,17 +395,17 @@ config = EngineConfig(
     
     # Thread Limitleri
     cpu_bound_task_limit=1,         # CPU worker başına thread (varsayılan: 1)
-    io_bound_task_limit=50,         # IO worker başına thread (varsayılan: 20)
+    io_bound_task_limit=25,         # IO worker başına thread (varsayılan: 20)
     
-    # Queue Boyutları
-    input_queue_size=5000,          # Input queue boyutu (varsayılan: 1000)
-    output_queue_size=20000,        # Output queue boyutu (varsayılan: 10000)
+    # Kuyruk Boyutları
+    input_queue_size=5000,          # Giriş kuyruğu boyutu (varsayılan: 1000)
+    output_queue_size=20000,        # Çıkış kuyruğu boyutu (varsayılan: 10000)
     
-    # Logging
+    # Loglama
     log_level="INFO",               # Log seviyesi: DEBUG, INFO, WARNING, ERROR
     
     # Diğer
-    queue_poll_timeout=1.0,         # Queue polling timeout (saniye)
+    queue_poll_timeout=1.0,         # Kuyruk polling timeout (saniye)
 )
 ```
 
@@ -416,17 +416,17 @@ config = EngineConfig(
 > - `io_bound_count=2` → 2 process = 2 çekirdek
 > - Toplam çekirdek kullanımı = cpu_bound_count + io_bound_count
 
-**CPU-Bound Ağırlıklı İşler (Data Processing, ML) - 8 çekirdekli CPU:**
+**CPU-Yoğun İşler (Veri İşleme, ML) - 8 çekirdekli CPU:**
 ```python
 config = EngineConfig(
     cpu_bound_count=6,        # 6 çekirdek CPU işleri için
     io_bound_count=2,         # 2 çekirdek IO işleri için
-    cpu_bound_task_limit=1,   # CPU worker başına 1 thread (CPU-bound için ideal)
+    cpu_bound_task_limit=1,   # CPU worker başına 1 thread (CPU-yoğun için ideal)
     io_bound_task_limit=20    # 2 process × 20 thread = 40 eşzamanlı IO işlemi
 )
 ```
 
-**IO-Bound Ağırlıklı İşler (Web Scraping, API Calls) - 8 çekirdekli CPU:**
+**IO-Yoğun İşler (Web Kazıma, API Çağrıları) - 8 çekirdekli CPU:**
 ```python
 config = EngineConfig(
     cpu_bound_count=2,        # 2 çekirdek CPU işleri için (az)
@@ -436,7 +436,7 @@ config = EngineConfig(
 )
 ```
 
-**Dengeli İş Yükü (ETL, Mixed Workloads) - 8 çekirdekli CPU:**
+**Dengeli İş Yükü (ETL, Karışık İşler) - 8 çekirdekli CPU:**
 ```python
 config = EngineConfig(
     cpu_bound_count=4,        # 4 çekirdek CPU işleri için
@@ -446,11 +446,11 @@ config = EngineConfig(
 )
 ```
 
-> 💡 **İpucu**: IO-bound işler için thread sayısını artırın, process sayısını değil!
+> 💡 **İpucu**: IO-yoğun işler için thread sayısını artırın, process sayısını değil!
 
 ---
 
-## 🧪 Test ve Development
+## 🧪 Test ve Geliştirme
 
 ### Testleri Çalıştırma
 
@@ -458,7 +458,7 @@ config = EngineConfig(
 # Tüm testleri çalıştır
 pytest
 
-# Coverage ile
+# Kapsama (coverage) ile
 pytest --cov=axion --cov-report=html
 
 # Sadece hızlı testler
@@ -467,11 +467,11 @@ pytest -m "not slow"
 # Paralel test
 pytest -n auto
 
-# Verbose mode
+# Ayrıntılı mod
 pytest -vv
 ```
 
-### Code Quality Checks
+### Kod Kalitesi Kontrolleri
 
 ```bash
 # Format kontrolü
@@ -487,23 +487,23 @@ isort axion/ tests/
 flake8 axion/ tests/
 pylint axion/
 
-# Type checking
+# Tip kontrolü
 mypy axion/
 ```
 
-### Benchmark Çalıştırma
+### Performans Testi Çalıştırma
 
 ```bash
-# Throughput testi
+# Verimlilik testi
 python benchmarks/throughput_test.py
 
-# Scalability testi
+# Ölçeklenebilirlik testi
 python benchmarks/scalability_test.py
 
 # IO performans testi
 python benchmarks/io_bound_performance_test.py
 
-# Complex workflow testi
+# Karmaşık iş akışı testi
 python benchmarks/complex_workflow_test.py
 ```
 
@@ -511,25 +511,25 @@ python benchmarks/complex_workflow_test.py
 
 ## 🎯 Performans
 
-### Benchmark Sonuçları
+### Test Sonuçları
 
-**Throughput** (Intel Core i7-10700K, 8 cores):
-- **CPU-Bound**: ~200-400 görev/saniye
-- **IO-Bound**: ~1,000-2,000 görev/saniye
-- **Mixed**: ~500-800 görev/saniye
+**Verimlilik** (Intel Core i7-10700K, 8 çekirdek):
+- **CPU-Yoğun**: ~200-400 görev/saniye
+- **IO-Yoğun**: ~1,000-2,000 görev/saniye
+- **Karışık**: ~500-800 görev/saniye
 
-**Latency**:
+**Gecikme**:
 - **P50**: <50ms
 - **P95**: <100ms
 - **P99**: <200ms
 
-**Scalability**:
-- Linear scaling 1-8 CPU workers (CPU-bound, 8 çekirdek sınırı)
-- Linear scaling 1-4 IO workers (IO-bound, 4 process yeterli)
-- Thread scaling: 1-100 threads per IO worker
-- Auto-scaling response time: <500ms
+**Ölçeklenebilirlik**:
+- Doğrusal ölçekleme 1-8 CPU worker (CPU-yoğun, 8 çekirdek sınırı)
+- Doğrusal ölçekleme 1-4 IO worker (IO-yoğun, 4 process yeterli)
+- Thread ölçekleme: IO worker başına 1-100 thread
+- Otomatik ölçekleme yanıt süresi: <500ms
 
-> 📊 Detaylı benchmark sonuçları için: [Benchmark Guide](benchmarks/benchmark_guide.md)
+> 📊 Detaylı test sonuçları için: [Performans Testi Kılavuzu](benchmarks/benchmark_guide.md)
 
 ---
 
@@ -538,19 +538,19 @@ python benchmarks/complex_workflow_test.py
 Katkılarınızı bekliyoruz! Lütfen şu adımları izleyin:
 
 1. **Fork** edin
-2. **Feature branch** oluşturun (`git checkout -b feature/amazing-feature`)
-3. Değişikliklerinizi **commit** edin (`git commit -m 'feat: Add amazing feature'`)
-4. Branch'inizi **push** edin (`git push origin feature/amazing-feature`)
+2. **Özellik branch'i** oluşturun (`git checkout -b feature/harika-ozellik`)
+3. Değişikliklerinizi **commit** edin (`git commit -m 'feat: Harika özellik eklendi'`)
+4. Branch'inizi **push** edin (`git push origin feature/harika-ozellik`)
 5. **Pull Request** açın
 
-### Development Setup
+### Geliştirme Ortamı Kurulumu
 
 ```bash
-# Repository'yi klonlayın
+# Depoyu klonlayın
 git clone https://github.com/vidinsight-labs/axion.git
 cd axion
 
-# Development bağımlılıklarını kurun
+# Geliştirme bağımlılıklarını kurun
 pip install -e ".[dev]"
 
 # Pre-commit hooks (opsiyonel)
@@ -561,14 +561,14 @@ pre-commit install
 pytest
 ```
 
-### Code Standards
+### Kod Standartları
 
 - ✅ Python 3.8+ uyumlu
-- ✅ Type hints kullanın
+- ✅ Type hint'ler kullanın
 - ✅ Docstring'ler Türkçe
-- ✅ Test coverage >70%
-- ✅ Black formatting
-- ✅ Flake8 compliant
+- ✅ Test kapsama >70%
+- ✅ Black formatlaması
+- ✅ Flake8 uyumlu
 
 ---
 
@@ -589,11 +589,17 @@ Bu proje **Apache License 2.0** altında lisanslanmıştır. Detaylar için [LIC
 
 ---
 
+## ⚠️ Sorumluluk Reddi
+
+Axion "OLDUĞU GİBİ" sunulmaktadır. Hiçbir garanti verilmemektedir. Production kullanımından doğan riskler kullanıcıya aittir. Yazılım Apache License 2.0 kapsamında sorumluluk sınırlamaları ile dağıtılmaktadır.
+
+---
+
 ## 📞 İletişim ve Destek
 
-- 📧 **Email**: development@vidinsight.com.tr
-- 🐛 **Issues**: [GitHub Issues](https://github.com/vidinsight-labs/axion/issues)
-- 📖 **Documentation**: [GitHub Docs](https://github.com/vidinsight-labs/axion/tree/main/docs)
+- 📧 **E-posta**: development@vidinsight.com.tr
+- 🐛 **Sorunlar**: [GitHub Issues](https://github.com/vidinsight-labs/axion/issues)
+- 📖 **Dokümantasyon**: [GitHub Docs](https://github.com/vidinsight-labs/axion/tree/main/docs)
 
 ---
 
@@ -601,12 +607,14 @@ Bu proje **Apache License 2.0** altında lisanslanmıştır. Detaylar için [LIC
 
 Axion'u kullandığınız için teşekkür ederiz! Geri bildirimleriniz bizim için çok değerli.
 
-⭐ Projeyi beğendiyseniz **star** vermeyi unutmayın!
+⭐ Projeyi beğendiyseniz **yıldız** vermeyi unutmayın!
 
 ---
 
-## ⚡ Hızlı Linkler
+<div align="center">
 
-- 📦 [PyPI Package](https://pypi.org/project/axion/) (yakında)
-- 🐛 [Issue Tracker](https://github.com/vidinsight-labs/Axion/issues)
-- 📚 [API Reference](https://axion.readthedocs.io/) (yakında)
+**[⬆ Başa Dön](#axion)**
+
+❤️ ile yapıldı - [VidInsight Labs](https://github.com/vidinsight-labs)
+
+</div>

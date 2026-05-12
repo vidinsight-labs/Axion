@@ -23,11 +23,12 @@ class EngineError(Exception):
     Tüm sistem hataları bu sınıftan türer.
     Hata mesajı ve kod içerir.
     """
+
     def __init__(self, message: str, code: Optional[str] = None):
         super().__init__(message)
         self.message = message
         self.code = code  # Hata kodu (örn: "ENG001")
-    
+
     def __str__(self):
         if self.code:
             return f"[{self.code}] {self.message}"
@@ -41,6 +42,7 @@ class TaskError(EngineError):
     Görev gönderme veya işleme sırasında oluşan hatalar.
     Task ID bilgisi içerir.
     """
+
     def __init__(self, message: str, code: Optional[str] = None, task_id: Optional[str] = None):
         super().__init__(message, code)
         self.task_id = task_id  # Hangi görevde hata oldu

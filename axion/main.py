@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-CPU Load Balancer - Ana Giriş Noktası
+Axion - Advanced Task Execution Engine
 
-Kullanım:
-    python -m cpu_load_balancer.main
-    python -m cpu_load_balancer.main --config config/custom_config.json
-    python -m cpu_load_balancer.main --interactive
+Main entry point for the Axion CLI tool.
+
+Usage:
+    python -m axion.main
+    python -m axion.main --config config.yaml
+    python -m axion.main --enable-isolation --isolation-profile balanced
+    python -m axion.main --interactive
 """
 
 import argparse
@@ -13,389 +16,758 @@ import sys
 import os
 import signal
 import time
-import json
+import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .engine import Engine
 from .config import EngineConfig
 from .task.task import Task
 from .core.enums import TaskType
-from .core.exceptions import EngineError, TaskError
+from .core.exceptions import EngineError, TaskError, ConfigError
+
+# Import CPU isolation components
+try:
+    from .isolation.cpu import CpuIsolationManager
+    from .isolation.cpu.exceptions import (
+        IsolationBackendError,
+        IsolationPermissionError,
+        IsolationUnsupportedError
+    )
+    ISOLATION_AVAILABLE = True
+except ImportError:
+    ISOLATION_AVAILABLE = False
+    CpuIsolationManager = None
+
+logger = logging.getLogger(__name__)
 
 
 class Axion:
-    """Ana uygulama sınıfı"""
-    
-    def __init__(self, config: Optional[EngineConfig] = None):
-        self.config = config or EngineConfig()
+    """Modern Axion CLI application with CPU isolation support"""
+
+    def __init__(self, config: EngineConfig, enable_isolation: bool = False):
+        """
+        Initialize Axion application.
+
+        Args:
+            config: Engine configuration
+            enable_isolation: Enable CPU isolation (overrides config setting)
+        """
+        self.config = config
         self.engine: Optional[Engine] = None
+        self.isolation_manager: Optional[CpuIsolationManager] = None
         self.running = False
-    
-    def start(self):
-        """Engine'i başlat"""
-        print("🚀 CPU Load Balancer başlatılıyor...")
-        print(f"   Config: cpu_bound={self.config.cpu_bound_count}, "
-              f"io_bound={self.config.io_bound_count}")
-        
+        self.start_time: Optional[float] = None
+
+        # Create isolation manager if enabled
+        if ISOLATION_AVAILABLE and (enable_isolation or config.cpu_isolation.enabled):
+            self.isolation_manager = CpuIsolationManager(config.cpu_isolation)
+            logger.info("CPU isolation manager created")
+        elif enable_isolation and not ISOLATION_AVAILABLE:
+            logger.warning("CPU isolation requested but not available (import error)")
+
+    def start(self) -> bool:
+        """Start Engine and CPU isolation"""
+        print(">> Axion starting...")
+        print(f"   CPU workers: {self.config.cpu_bound_count}")
+        print(f"   IO workers: {self.config.io_bound_count}")
+
         try:
-            self.engine = Engine(self.config)
+            # 1. Start CPU isolation (if enabled)
+            if self.isolation_manager:
+                print("   Initializing CPU isolation...")
+                try:
+                    partition = self.isolation_manager.start()
+                    if partition.enabled:
+                        print(f"   [OK] CPU isolation active")
+                        print(f"     Profile: {partition.profile}")
+                        print(f"     System CPUs: {partition.system_cpus} ({partition.system_cpu_count} cores)")
+                        print(f"     Axion CPUs: {partition.axion_cpus} ({partition.axion_cpu_count} cores)")
+                    else:
+                        print(f"   [WARN] CPU isolation disabled: {partition.reason}")
+                except (IsolationBackendError, IsolationPermissionError, IsolationUnsupportedError) as e:
+                    print(f"   [WARN] CPU isolation failed: {e}")
+                    logger.warning(f"CPU isolation failed: {e}")
+
+            # 2. Start Engine (manager injection ile worker registration pool'da yapılır)
+            self.engine = Engine(self.config, isolation_manager=self.isolation_manager)
             self.engine.start()
-            self.running = True
-            
-            # Signal handler'ları ayarla
+
+            # 3. Setup signal handlers
             signal.signal(signal.SIGINT, self._signal_handler)
             signal.signal(signal.SIGTERM, self._signal_handler)
-            
-            print("✅ Engine başarıyla başlatıldı!")
+
+            self.running = True
+            self.start_time = time.time()
+
+            print("[OK] Axion started successfully!")
             return True
-        
+
         except Exception as e:
-            print(f"❌ Engine başlatma hatası: {e}", file=sys.stderr)
+            print(f"[ERROR] Failed to start Axion: {e}", file=sys.stderr)
+            logger.error(f"Startup failed: {e}", exc_info=True)
             return False
-    
+
     def shutdown(self):
-        """Engine'i kapat"""
-        if self.engine and self.running:
-            print("\n🛑 Engine kapatılıyor...")
+        """Graceful shutdown with isolation cleanup"""
+        if not self.running:
+            return
+
+        print("\n>> Shutting down Axion...")
+
+        # Shutdown engine first
+        if self.engine:
+            print("   Stopping engine...")
             self.engine.shutdown()
-            self.running = False
-            print("✅ Engine kapatıldı")
-    
+
+        # Cleanup isolation (restores systemd settings if configured)
+        if self.isolation_manager:
+            print("   Cleaning up CPU isolation...")
+            try:
+                self.isolation_manager.stop()
+                print("   [OK] CPU isolation cleaned up")
+            except Exception as e:
+                logger.warning(f"Isolation cleanup failed: {e}")
+
+        self.running = False
+        print("[OK] Axion stopped")
+
     def _signal_handler(self, signum, frame):
-        """Signal handler - graceful shutdown"""
-        print(f"\n⚠️  Signal alındı ({signum}), kapatılıyor...")
+        """Signal handler for graceful shutdown"""
+        print(f"\n[WARN] Signal received ({signum}), shutting down...")
         self.shutdown()
         sys.exit(0)
-    
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive status including isolation"""
+        status = {
+            "engine": {
+                "is_running": self.running,
+                "uptime_seconds": time.time() - self.start_time if self.start_time else 0
+            }
+        }
+
+        # Add isolation status
+        if self.isolation_manager:
+            try:
+                iso_status = self.isolation_manager.status()
+                status["isolation"] = iso_status
+            except Exception as e:
+                logger.warning(f"Failed to get isolation status: {e}")
+                status["isolation"] = {"error": str(e)}
+
+        # Add engine component status
+        if self.engine:
+            try:
+                engine_status = self.engine.get_status()
+                status.update(engine_status)
+            except Exception as e:
+                logger.warning(f"Failed to get engine status: {e}")
+
+        return status
+
     def show_status(self):
-        """Engine durumunu göster"""
+        """Display formatted status"""
         if not self.engine:
-            print("❌ Engine başlatılmamış")
+            print("[ERROR] Engine not started")
             return
-        
-        status = self.engine.get_status()
-        
-        print("\n📊 Engine Durumu:")
-        print(f"   Çalışıyor: {status['engine']['is_running']}")
-        print("\n📦 Component'ler:")
-        
-        for name, comp_status in status['components'].items():
-            health = comp_status['health']
-            metrics = comp_status['metrics']
-            
-            print(f"\n   {name}:")
-            print(f"      Sağlık: {health}")
-            for key, value in metrics.items():
-                print(f"      {key}: {value}")
-    
+
+        status = self.get_status()
+
+        # Engine status
+        print("\n" + "=" * 60)
+        print("AXION ENGINE STATUS")
+        print("=" * 60)
+
+        engine_info = status.get("engine", {})
+        is_running = engine_info.get("is_running", False)
+        uptime = engine_info.get("uptime_seconds", 0)
+
+        print(f"Running: {'Yes' if is_running else 'No'}")
+        if uptime > 0:
+            print(f"Uptime: {self._format_uptime(uptime)}")
+
+        # CPU Isolation status
+        if "isolation" in status:
+            print("\n" + "-" * 60)
+            print("CPU ISOLATION")
+            print("-" * 60)
+            self._show_isolation_status(status["isolation"])
+
+        # Workers
+        print("\n" + "-" * 60)
+        print("WORKERS")
+        print("-" * 60)
+
+        components = status.get("components", {})
+        if "process_pool" in components:
+            pool_metrics = components["process_pool"].get("metrics", {})
+            print(f"CPU-bound: {pool_metrics.get('cpu_workers', 0)} workers")
+            print(f"IO-bound: {pool_metrics.get('io_workers', 0)} workers")
+            print(f"Active threads: {pool_metrics.get('total_active_threads', 0)}")
+
+        # Queues
+        print("\n" + "-" * 60)
+        print("QUEUES")
+        print("-" * 60)
+
+        if "input_queue" in components:
+            input_metrics = components["input_queue"].get("metrics", {})
+            print(f"Input: {input_metrics.get('size', 0)} / {input_metrics.get('maxsize', '?')}")
+
+        if "output_queue" in components:
+            output_metrics = components["output_queue"].get("metrics", {})
+            print(f"Output: {output_metrics.get('size', 0)} / {output_metrics.get('maxsize', '?')}")
+
+        # Components health
+        print("\n" + "-" * 60)
+        print("COMPONENTS")
+        print("-" * 60)
+
+        for name, comp in components.items():
+            health = comp.get("health", "UNKNOWN")
+            print(f"{name}: {health}")
+
+        print("=" * 60)
+
+    def _show_isolation_status(self, iso_status: Dict[str, Any]):
+        """Display CPU isolation status"""
+        if "error" in iso_status:
+            print(f"Error: {iso_status['error']}")
+            return
+
+        enabled = iso_status.get("enabled", False)
+        print(f"Enabled: {'Yes' if enabled else 'No'}")
+
+        if enabled:
+            print(f"Backend: {iso_status.get('backend_name', 'unknown')}")
+            print(f"Active: {'Yes' if iso_status.get('active', False) else 'No'}")
+
+            partition = iso_status.get("partition", {})
+            if partition:
+                print(f"Profile: {partition.get('profile', 'unknown')}")
+                print(f"System CPUs: {partition.get('system_cpus', '?')} ({partition.get('system_cpu_count', '?')} cores)")
+                print(f"Axion CPUs: {partition.get('axion_cpus', '?')} ({partition.get('axion_cpu_count', '?')} cores)")
+
+    def show_worker_details(self):
+        """Display detailed worker information"""
+        if not self.engine or not self.engine._process_pool:
+            print("[ERROR] Engine not started")
+            return
+
+        pool = self.engine._process_pool
+
+        print("\n" + "=" * 60)
+        print("WORKER DETAILS")
+        print("=" * 60)
+
+        # CPU workers
+        print("\nCPU-bound Workers:")
+        for worker in pool._cpu_workers:
+            pid = worker._process.pid if worker._process else "N/A"
+            print(f"  {worker._worker_id}: PID {pid}")
+
+        # IO workers
+        print("\nIO-bound Workers:")
+        for worker in pool._io_workers:
+            pid = worker._process.pid if worker._process else "N/A"
+            print(f"  {worker._worker_id}: PID {pid}")
+
+        print("=" * 60)
+
+    def show_config(self):
+        """Display current configuration"""
+        print("\n" + "=" * 60)
+        print("CONFIGURATION")
+        print("=" * 60)
+
+        print(f"\nEngine:")
+        print(f"  CPU workers: {self.config.cpu_bound_count}")
+        print(f"  IO workers: {self.config.io_bound_count}")
+        print(f"  CPU task limit: {self.config.cpu_bound_task_limit}")
+        print(f"  IO task limit: {self.config.io_bound_task_limit}")
+        print(f"  Input queue size: {self.config.input_queue_size}")
+        print(f"  Output queue size: {self.config.output_queue_size}")
+        print(f"  Log level: {self.config.log_level}")
+
+        if self.isolation_manager:
+            iso_config = self.config.cpu_isolation
+            print(f"\nCPU Isolation:")
+            print(f"  Enabled: {iso_config.enabled}")
+            print(f"  Backend: {iso_config.backend}")
+            print(f"  Profile: {iso_config.profile}")
+            print(f"  System CPUs: {iso_config.system_cpus}")
+            print(f"  Axion CPUs: {iso_config.axion_cpus}")
+
+        print("=" * 60)
+
+    def _format_uptime(self, seconds: float) -> str:
+        """Format uptime in human-readable format"""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            minutes = int(seconds / 60)
+            secs = int(seconds % 60)
+            return f"{minutes}m {secs}s"
+        else:
+            hours = int(seconds / 3600)
+            minutes = int((seconds % 3600) / 60)
+            return f"{hours}h {minutes}m"
+
     def run_interactive(self):
-        """Interactive mode - kullanıcı komutları alır"""
+        """Interactive mode - accept user commands"""
         if not self.engine:
-            print("❌ Engine başlatılmamış")
+            print("[ERROR] Engine not started")
             return
-        
-        print("\n💡 Interactive Mode")
-        print("   Komutlar: status, submit <script_path>, quit")
-        print("   Örnek: submit /path/to/script.py")
-        
+
+        print("\n>> Interactive Mode")
+        print("   Type 'help' for available commands")
+
         while self.running:
             try:
                 command = input("\n> ").strip()
-                
+
                 if not command:
                     continue
-                
-                if command == "quit" or command == "exit":
-                    break
-                
-                elif command == "status":
-                    self.show_status()
-                
-                elif command.startswith("submit "):
-                    script_path = command[7:].strip()
-                    if not script_path:
-                        print("❌ Script path belirtin: submit <script_path>")
-                        continue
-                    
-                    self._submit_example_task(script_path)
-                
-                elif command == "help":
-                    print("\n📖 Komutlar:")
-                    print("   status              - Engine durumunu göster")
-                    print("   submit <path>       - Örnek görev gönder")
-                    print("   quit / exit         - Çıkış")
-                    print("   help                - Bu yardım mesajı")
-                
-                else:
-                    print(f"❌ Bilinmeyen komut: {command}")
-                    print("   'help' yazarak komutları görebilirsiniz")
-            
+
+                self._handle_command(command)
+
             except KeyboardInterrupt:
                 break
             except EOFError:
                 break
-    
-    def _submit_example_task(self, script_path: str):
-        """Örnek görev gönder"""
-        if not self.engine:
+            except Exception as e:
+                print(f"[ERROR] {e}")
+                logger.error(f"Command error: {e}", exc_info=True)
+
+    def _handle_command(self, command: str):
+        """Handle interactive command"""
+        parts = command.split()
+        cmd = parts[0].lower()
+        args = parts[1:] if len(parts) > 1 else []
+
+        if cmd in ("quit", "exit"):
+            print("Exiting...")
+            self.shutdown()
+            sys.exit(0)
+
+        elif cmd == "status":
+            self.show_status()
+
+        elif cmd == "workers":
+            self.show_worker_details()
+
+        elif cmd == "isolation":
+            if self.isolation_manager:
+                status = self.get_status()
+                print("\n" + "=" * 60)
+                print("CPU ISOLATION STATUS")
+                print("=" * 60)
+                self._show_isolation_status(status.get("isolation", {}))
+                print("=" * 60)
+            else:
+                print("[ERROR] CPU isolation not enabled")
+
+        elif cmd == "config":
+            self.show_config()
+
+        elif cmd == "submit":
+            if len(args) < 1:
+                print("Usage: submit <script_path> [cpu|io]")
+                return
+
+            script_path = args[0]
+            task_type_str = args[1].lower() if len(args) > 1 else "io"
+
+            if task_type_str == "cpu":
+                task_type = TaskType.CPU_BOUND
+            else:
+                task_type = TaskType.IO_BOUND
+
+            self._submit_task(script_path, task_type)
+
+        elif cmd == "result":
+            if len(args) < 1:
+                print("Usage: result <task_id>")
+                return
+
+            task_id = args[0]
+            self._get_result(task_id)
+
+        elif cmd == "help":
+            self._show_help()
+
+        else:
+            print(f"[ERROR] Unknown command: {cmd}")
+            print("   Type 'help' for available commands")
+
+    def _submit_task(self, script_path: str, task_type: TaskType):
+        """Submit a task"""
+        if not Path(script_path).exists():
+            print(f"[ERROR] Script not found: {script_path}")
             return
-        
+
         try:
             task = Task.create(
                 script_path=script_path,
-                params={"value": 42, "test": True},
-                task_type=TaskType.IO_BOUND
+                params={"submitted_from": "interactive"},
+                task_type=task_type
             )
-            
+
             task_id = self.engine.submit_task(task)
-            print(f"✅ Görev gönderildi: {task_id[:8]}...")
-            
-            # Sonucu bekle
-            print("   Sonuç bekleniyor...")
-            result = self.engine.get_result(task_id, timeout=30)
-            
-            if result:
-                if result.is_success:
-                    print(f"✅ Görev başarılı!")
-                    print(f"   Sonuç: {result.data}")
-                else:
-                    print(f"❌ Görev başarısız: {result.error}")
-            else:
-                print("⏱️  Timeout - sonuç alınamadı")
-        
-        except TaskError as e:
-            print(f"❌ Görev hatası: {e}")
-        except Exception as e:
-            print(f"❌ Hata: {e}")
-    
-    def run_demo(self):
-        """Demo mode - örnek görevler çalıştır"""
-        if not self.engine:
-            return
-        
-        print("\n🎬 Demo Mode - Örnek görevler çalıştırılıyor...")
-        
-        # Örnek script path'i (kullanıcı kendi script'ini belirtebilir)
-        demo_script = input("   Script path (boş bırakırsanız demo atlanır): ").strip()
-        
-        if not demo_script:
-            print("   Demo atlandı")
-            return
-        
-        if not Path(demo_script).exists():
-            print(f"❌ Script bulunamadı: {demo_script}")
-            return
-        
+            type_str = "CPU" if task_type == TaskType.CPU_BOUND else "IO"
+            print(f"[OK] Task submitted: {task_id[:8]}... (type: {type_str})")
+            print(f"   Use 'result {task_id[:8]}' to get the result")
+
+        except (TaskError, EngineError) as e:
+            print(f"[ERROR] Failed to submit task: {e}")
+
+    def _get_result(self, task_id: str):
+        """Get task result"""
+        print(f"[...] Waiting for result of {task_id}...")
+
         try:
-            task = Task.create(
-                script_path=demo_script,
-                params={"demo": True, "timestamp": time.time()},
-                task_type=TaskType.IO_BOUND
-            )
-            
-            print(f"📤 Görev gönderiliyor: {task.id[:8]}...")
-            task_id = self.engine.submit_task(task)
-            
-            print("⏳ Sonuç bekleniyor...")
             result = self.engine.get_result(task_id, timeout=30)
-            
+
             if result:
                 if result.is_success:
-                    print(f"✅ Başarılı! Sonuç: {result.data}")
+                    print(f"[OK] Task successful!")
+                    print(f"   Result: {result.data}")
+                    print(f"   Duration: {result.duration:.3f}s")
                 else:
-                    print(f"❌ Başarısız: {result.error}")
+                    print(f"[ERROR] Task failed: {result.error}")
             else:
-                print("⏱️  Timeout")
-        
+                print("[WARN] Timeout - result not available")
+
         except Exception as e:
-            print(f"❌ Demo hatası: {e}")
+            print(f"[ERROR] Error getting result: {e}")
+
+    def _show_help(self):
+        """Show help for interactive commands"""
+        print("\n" + "=" * 60)
+        print("AVAILABLE COMMANDS")
+        print("=" * 60)
+        print("\n  status              - Show engine status and metrics")
+        print("  submit <script>     - Submit task (default: IO_BOUND)")
+        print("  submit <script> cpu - Submit CPU-bound task")
+        print("  submit <script> io  - Submit IO-bound task")
+        print("  result <task_id>    - Get result for specific task")
+        print("  workers             - Show worker details and PIDs")
+        print("  isolation           - Show CPU isolation details (if enabled)")
+        print("  config              - Display current configuration")
+        print("  help                - Show this help")
+        print("  quit, exit          - Shutdown and exit")
+        print("\n" + "=" * 60)
+
+    def run_demo(self):
+        """Run demo with example tasks"""
+        if not self.engine:
+            print("[ERROR] Engine not started")
+            return
+
+        print("\n>> Demo Mode")
+        print("   This would run example tasks")
+        print("   Demo implementation can be added here")
+        print("   For now, switching to interactive mode...")
+        print()
+        self.run_interactive()
 
 
-def load_config_from_file(config_path: str) -> Optional[EngineConfig]:
-    """JSON dosyasından config yükle"""
-    try:
-        # Eğer relative path ise, config klasöründen başlat
-        if not os.path.isabs(config_path):
-            # Önce mevcut dizinde dene
-            if not os.path.exists(config_path):
-                # Config klasöründe dene
-                config_dir = Path(__file__).parent / "config"
-                config_path_in_dir = config_dir / config_path
-                if config_path_in_dir.exists():
-                    config_path = str(config_path_in_dir)
-        
-        with open(config_path, 'r') as f:
-            data = json.load(f)
-        
-        return EngineConfig(
-            input_queue_size=data.get("input_queue_size", 1000),
-            output_queue_size=data.get("output_queue_size", 10000),
-            cpu_bound_count=data.get("cpu_bound_count", 1),
-            io_bound_count=data.get("io_bound_count", None),
-            cpu_bound_task_limit=data.get("cpu_bound_task_limit", 1),
-            io_bound_task_limit=data.get("io_bound_task_limit", 20),
-            log_level=data.get("log_level", "INFO"),
-            queue_poll_timeout=data.get("queue_poll_timeout", 1.0)
-        )
-    
-    except Exception as e:
-        print(f"⚠️  Config yükleme hatası: {e}", file=sys.stderr)
-        return None
+def merge_config_from_cli(config: EngineConfig, args: argparse.Namespace) -> EngineConfig:
+    """
+    Merge CLI arguments into config.
+
+    Priority: CLI args > config file > defaults
+    """
+    # Override engine settings
+    if args.cpu_workers is not None:
+        config.cpu_bound_count = args.cpu_workers
+
+    if args.io_workers is not None:
+        config.io_bound_count = args.io_workers
+
+    if args.log_level is not None:
+        config.log_level = args.log_level.upper()
+
+    # Override isolation settings
+    if args.enable_isolation:
+        config.cpu_isolation.enabled = True
+
+    if args.isolation_profile is not None:
+        config.cpu_isolation.profile = args.isolation_profile
+
+    if args.isolation_backend is not None:
+        config.cpu_isolation.backend = args.isolation_backend
+
+    if args.system_cpus is not None:
+        config.cpu_isolation.system_cpus = args.system_cpus
+
+    if args.axion_cpus is not None:
+        config.cpu_isolation.axion_cpus = args.axion_cpus
+
+    if args.affinity_mode is not None:
+        config.cpu_isolation.affinity_mode = args.affinity_mode
+
+    if args.affinity_cpus is not None:
+        config.cpu_isolation.affinity_cpus = args.affinity_cpus
+
+    return config
 
 
-def create_default_config_file(path: Optional[str] = None):
-    """Varsayılan config dosyası oluştur"""
+def create_default_yaml_config(path: Optional[str] = None):
+    """Generate default config.yaml with cpu_isolation section"""
     if path is None:
-        # Varsayılan olarak config klasörüne kaydet
-        config_dir = Path(__file__).parent / "config"
-        config_dir.mkdir(exist_ok=True)
-        path = str(config_dir / "config.json")
-    
-    default_config = {
-        "input_queue_size": 1000,
-        "output_queue_size": 10000,
-        "cpu_bound_count": 1,
-        "io_bound_count": None,
-        "cpu_bound_task_limit": 1,
-        "io_bound_task_limit": 20,
-        "log_level": "INFO",
-        "queue_poll_timeout": 1.0
-    }
-    
-    with open(path, 'w') as f:
-        json.dump(default_config, f, indent=2)
-    
-    print(f"✅ Varsayılan config dosyası oluşturuldu: {path}")
+        path = "config.yaml"
+
+    config_path = Path(path)
+
+    if config_path.exists():
+        print(f"[WARN] Config file already exists: {path}")
+        response = input("Overwrite? (y/N): ").strip().lower()
+        if response != 'y':
+            print("Cancelled")
+            return
+
+    # Read template from axion/config/config.yaml
+    template_path = Path(__file__).parent / "config" / "config.yaml"
+
+    if template_path.exists():
+        content = template_path.read_text(encoding="utf-8")
+    else:
+        # Fallback to minimal config
+        content = """# Axion Configuration
+
+# Queue settings
+input_queue_size: 1000
+output_queue_size: 10000
+
+# Worker settings
+cpu_bound_count: 3
+io_bound_count: null  # Auto-detect
+
+cpu_bound_task_limit: 1
+io_bound_task_limit: 20
+
+# General settings
+log_level: INFO
+queue_poll_timeout: 1.0
+
+# CPU isolation/affinity settings
+cpu_isolation:
+  enabled: false
+  backend: auto  # auto | linux_systemd_cgroup | noop
+  profile: balanced  # safe | balanced | performance | custom
+  system_cpus: auto
+  axion_cpus: auto
+  restrict_system_slices: true
+  restore_on_shutdown: true
+  cgroup_root: /sys/fs/cgroup/axion-runtime
+  min_cpus_required: 4
+  fail_on_error: false
+  affinity_mode: disabled  # disabled | auto | custom
+  affinity_cpus: auto
+"""
+
+    config_path.write_text(content, encoding="utf-8")
+    print(f"[OK] Default config created: {path}")
 
 
 def main():
-    """Ana fonksiyon"""
+    """Main entry point"""
     parser = argparse.ArgumentParser(
-        description="CPU Load Balancer - Task Execution Engine",
+        prog="python -m axion.main",
+        description="Axion - Advanced Task Execution Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Örnekler:
-  # Varsayılan ayarlarla başlat
-  python -m cpu_load_balancer.main
-  
-  # Interactive mode
-  python -m cpu_load_balancer.main --interactive
-  
-  # Config dosyası ile
-  python -m cpu_load_balancer.main --config config/my_config.json
-  
-  # Demo mode
-  python -m cpu_load_balancer.main --demo
-  
-  # Varsayılan config dosyası oluştur
-  python -m cpu_load_balancer.main --create-config
+Examples:
+  # Start with default config
+  python -m axion.main
+
+  # Use custom YAML config
+  python -m axion.main --config my_config.yaml
+
+  # Enable CPU isolation with balanced profile
+  python -m axion.main --enable-isolation --isolation-profile balanced
+
+  # Run demo with isolation
+  python -m axion.main --demo --enable-isolation
+
+  # Quick status check
+  python -m axion.main --status
+
+  # Generate default config file
+  python -m axion.main --create-config
+
+For more information, visit: https://github.com/vidinsight-labs/axion
         """
     )
-    
-    parser.add_argument(
+
+    # General options
+    general = parser.add_argument_group('General')
+    general.add_argument(
         '--config', '-c',
         type=str,
-        help='Config dosyası yolu (JSON). Varsayılan: config/config.json'
+        help='YAML config file path (default: auto-detect)'
     )
-    
-    parser.add_argument(
-        '--interactive', '-i',
-        action='store_true',
-        help='Interactive mode - komut satırından komutlar al'
-    )
-    
-    parser.add_argument(
-        '--demo', '-d',
-        action='store_true',
-        help='Demo mode - örnek görev çalıştır'
-    )
-    
-    parser.add_argument(
-        '--create-config',
-        action='store_true',
-        help='Varsayılan config.json dosyası oluştur ve çık'
-    )
-    
-    parser.add_argument(
-        '--cpu-bound',
-        type=int,
-        help='CPU-bound worker sayısı (varsayılan: 1)'
-    )
-    
-    parser.add_argument(
-        '--io-bound',
-        type=int,
-        help='IO-bound worker sayısı (varsayılan: otomatik)'
-    )
-    
-    parser.add_argument(
+    general.add_argument(
         '--log-level',
         type=str,
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-        help='Log seviyesi (varsayılan: INFO)'
+        help='Log level'
     )
-    
+    general.add_argument(
+        '--interactive', '-i',
+        action='store_true',
+        help='Interactive mode (default)'
+    )
+    general.add_argument(
+        '--demo', '-d',
+        action='store_true',
+        help='Run demo with example tasks'
+    )
+    general.add_argument(
+        '--status', '-s',
+        action='store_true',
+        help='Show status and exit'
+    )
+    general.add_argument(
+        '--create-config',
+        action='store_true',
+        help='Generate default config.yaml and exit'
+    )
+
+    # Worker options
+    workers = parser.add_argument_group('Workers')
+    workers.add_argument(
+        '--cpu-workers',
+        type=int,
+        help='CPU-bound worker count'
+    )
+    workers.add_argument(
+        '--io-workers',
+        type=int,
+        help='IO-bound worker count'
+    )
+
+    # CPU Isolation options
+    isolation = parser.add_argument_group('CPU Isolation (optional)')
+    isolation.add_argument(
+        '--enable-isolation',
+        action='store_true',
+        help='Enable CPU isolation'
+    )
+    isolation.add_argument(
+        '--isolation-profile',
+        type=str,
+        choices=['safe', 'balanced', 'performance', 'custom'],
+        help='CPU isolation profile'
+    )
+    isolation.add_argument(
+        '--isolation-backend',
+        type=str,
+        choices=['auto', 'linux_systemd_cgroup', 'noop'],
+        help='CPU isolation backend'
+    )
+    isolation.add_argument(
+        '--system-cpus',
+        type=str,
+        help='System CPU range (e.g., "0-1")'
+    )
+    isolation.add_argument(
+        '--axion-cpus',
+        type=str,
+        help='Axion CPU range (e.g., "2-7")'
+    )
+    isolation.add_argument(
+        '--affinity-mode',
+        type=str,
+        choices=['disabled', 'auto', 'custom'],
+        help='CPU affinity mode (when isolation disabled)'
+    )
+    isolation.add_argument(
+        '--affinity-cpus',
+        type=str,
+        help='CPU affinity range (e.g., "2-3")'
+    )
+
     args = parser.parse_args()
-    
-    # Config dosyası oluştur
+
+    # Handle --create-config
     if args.create_config:
-        create_default_config_file()
+        create_default_yaml_config()
         return 0
-    
-    # Config yükle
+
+    # Load configuration
     config = None
-    
+
     if args.config:
-        config = load_config_from_file(args.config)
-        if not config:
+        # Load from specified file
+        try:
+            config = EngineConfig.from_yaml(args.config)
+            print(f"[OK] Loaded config from: {args.config}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load config from {args.config}: {e}", file=sys.stderr)
             return 1
     else:
-        # Varsayılan config dosyasını dene
-        default_config_path = Path(__file__).parent / "config" / "config.json"
-        if default_config_path.exists():
-            config = load_config_from_file(str(default_config_path))
-    
-    # Komut satırı argümanları ile config'i güncelle
+        # Try auto-detect: config.yaml in current directory or package config
+        candidates = [
+            Path("config.yaml"),
+            Path("axion/config/config.yaml"),
+            Path(__file__).parent / "config" / "config.yaml"
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                try:
+                    config = EngineConfig.from_yaml(str(candidate))
+                    print(f"[OK] Loaded config from: {candidate}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to load {candidate}: {e}")
+
+    # Use defaults if no config found
     if config is None:
         config = EngineConfig()
-    
-    if args.cpu_bound:
-        config.cpu_bound_count = args.cpu_bound
-    
-    if args.io_bound:
-        config.io_bound_count = args.io_bound
-    
-    if args.log_level:
-        config.log_level = args.log_level
-    
-    # Uygulamayı başlat
-    app = Axion(config)
-    
+        print("[OK] Using default configuration")
+
+    # Merge CLI overrides
+    config = merge_config_from_cli(config, args)
+
+    # Setup logging
+    logging.basicConfig(
+        level=getattr(logging, config.log_level),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Create Axion application
+    app = Axion(config, enable_isolation=args.enable_isolation)
+
+    # Start engine
     if not app.start():
         return 1
-    
+
     try:
-        # Mod seçimi
-        if args.interactive:
-            app.run_interactive()
-        elif args.demo:
-            app.run_demo()
-            # Demo sonrası interactive mode'a geç
-            print("\n💡 Interactive mode'a geçiliyor...")
-            app.run_interactive()
-        else:
-            # Varsayılan: status göster ve interactive mode'a geç
+        # Mode selection
+        if args.status:
+            # Quick status and exit
             app.show_status()
-            print("\n💡 Interactive mode'a geçiliyor...")
+        elif args.demo:
+            # Demo mode
+            app.run_demo()
+        else:
+            # Interactive mode (default)
             app.run_interactive()
-    
+
+    except Exception as e:
+        print(f"\n[ERROR] {e}", file=sys.stderr)
+        logger.error(f"Runtime error: {e}", exc_info=True)
+        return 1
+
     finally:
         app.shutdown()
-    
+
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

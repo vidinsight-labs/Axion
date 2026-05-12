@@ -20,6 +20,8 @@ import logging
 from ..core.enums import TaskType, ProcessMetric
 from ..status import ComponentStatus
 from .process import WorkerProcess
+from ..config.cpu_isolation_config import CpuIsolationConfig
+from ..isolation import CpuIsolationManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,31 +45,38 @@ class ProcessPool:
         io_bound_count: Optional[int] = None,
         cpu_task_limit: int = 1,
         io_task_limit: int = 20,
+        isolation_config: CpuIsolationConfig = None,
+        isolation_manager: Optional[CpuIsolationManager] = None,
         executor_func: Optional[Callable] = None
     ):
         if io_bound_count is None:
             io_bound_count = max(1, multiprocessing.cpu_count() - 1)
-        
+
         self._output_queue = output_queue
         self._cpu_bound_count = cpu_bound_count
         self._io_bound_count = io_bound_count
         self._cpu_task_limit = cpu_task_limit
         self._io_task_limit = io_task_limit
         self._executor_func = executor_func
-        
+
         # Sharded Queues (Her worker için ayrı kuyruk)
         self._cpu_queues = []
         self._io_queues = []
-        
+
         self._cpu_workers: List[WorkerProcess] = []
         self._io_workers: List[WorkerProcess] = []
-        
+
         self._started = False
         self._shutdown_event = Event()
         self._lock = Lock()
-        
+
         # Worker ID counter (Unique ID'ler için)
         self._worker_counter = 0
+
+        self.isolation_config = isolation_config
+        # Manager dışarıdan injection ile geliyor; sahipliği çağıran (Axion) taşır.
+        self.isolation_manager: Optional[CpuIsolationManager] = isolation_manager
+
     
     def start(self) -> bool:
         """Pool'u başlat"""
@@ -86,7 +95,6 @@ class ProcessPool:
             available_cpus = [0]
             
         for i in range(self._cpu_bound_count):
-            # Worker'a CPU ata (Round-robin)
             cpu_id = available_cpus[i % len(available_cpus)] if available_cpus else None
             
             worker_id = f"cpu-{self._worker_counter}"
@@ -100,9 +108,8 @@ class ProcessPool:
                 executor_func=None,
                 cpu_id=cpu_id,
                 nice_level=0,
-                # Work Stealing Parametreleri
                 my_queue=self._cpu_queues[i],
-                all_queues=self._cpu_queues # Tüm kuyrukları bilmeli ki çalabilsin
+                all_queues=self._cpu_queues
             )
             worker.start()
             self._cpu_workers.append(worker)
@@ -129,7 +136,18 @@ class ProcessPool:
             )
             worker.start()
             self._io_workers.append(worker)
-        
+
+        # Worker'ları izolasyona kaydet (manager dışarıdan injection ile geldi)
+        if self.isolation_manager:
+            for worker in self._cpu_workers + self._io_workers:
+                worker.wait_ready(timeout=5.0)
+                try:
+                    self.isolation_manager.add_worker(worker.get_pid())
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to register worker {worker._worker_id} to isolation: {e}"
+                    )
+
         self._started = True
         return True
 
@@ -201,11 +219,11 @@ class ProcessPool:
     def shutdown(self) -> None:
         """Pool'u kapat"""
         self._shutdown_event.set()
-        
+
         # Tüm worker'ları kapat
         for worker in self._cpu_workers + self._io_workers:
             worker.shutdown()
-        
+
         # Process'lerin kapanmasını bekle
         for worker in self._cpu_workers + self._io_workers:
             if worker._process and worker._process.is_alive():
@@ -217,7 +235,9 @@ class ProcessPool:
                     if worker._process.is_alive():
                         worker._process.kill()
                         worker._process.join(timeout=1.0)
-        
+
+        # Isolation manager sahipliği Axion katmanında — yalnızca referansı bırak.
+        self.isolation_manager = None
         self._started = False
     
     def wait_for_shutdown(self, timeout: float = 10.0) -> bool:
@@ -274,6 +294,14 @@ class ProcessPool:
                     all_queues=self._cpu_queues
                 )
                 worker.start()
+                if self.isolation_manager:
+                    worker.wait_ready(timeout=5.0)
+                    try:
+                        self.isolation_manager.add_worker(worker.get_pid())
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to register scaled-out worker {worker._worker_id} to isolation: {e}"
+                        )
                 self._cpu_workers.append(worker)
                 self._cpu_bound_count += 1
 
@@ -306,6 +334,14 @@ class ProcessPool:
                     all_queues=self._io_queues
                 )
                 worker.start()
+                if self.isolation_manager:
+                    worker.wait_ready(timeout=5.0)
+                    try:
+                        self.isolation_manager.add_worker(worker.get_pid())
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to register scaled-out worker {worker._worker_id} to isolation: {e}"
+                        )
                 self._io_workers.append(worker)
                 self._io_bound_count += 1
 
