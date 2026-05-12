@@ -40,6 +40,18 @@ ISOLATION_MODE_FULL = "full"
 ISOLATION_MODE_OFF = "off"
 
 
+def _resolve_worker_configs(candidates: List[int], max_workers: int) -> List[int]:
+    """Aday worker sayılarını [1, max_workers] aralığına kırp, tekilleştir, sırala."""
+    out: List[int] = []
+    seen = set()
+    for c in candidates:
+        v = max(1, min(c, max_workers))
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return sorted(out)
+
+
 def build_isolation_config(mode: str, profile: str) -> CpuIsolationConfig:
     if mode == ISOLATION_MODE_FULL:
         return CpuIsolationConfig(
@@ -269,10 +281,11 @@ def _make_engine(
     return engine
 
 
-def run_file_io_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[IOBenchmarkResult]:
+def run_file_io_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[IOBenchmarkResult]:
     results: List[IOBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count), min(8, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4, 8], max_workers)
 
     test_configs = [
         {"operation": "read", "file_size": 512, "num_files": 5, "name": "Read Small"},
@@ -308,10 +321,11 @@ def run_file_io_benchmark(script_path: str, isolation_mode: str, profile: str) -
     return results
 
 
-def run_network_io_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[IOBenchmarkResult]:
+def run_network_io_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[IOBenchmarkResult]:
     results: List[IOBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count), min(8, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4, 8], max_workers)
 
     test_configs = [
         {
@@ -367,10 +381,11 @@ def run_network_io_benchmark(script_path: str, isolation_mode: str, profile: str
     return results
 
 
-def run_database_io_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[IOBenchmarkResult]:
+def run_database_io_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[IOBenchmarkResult]:
     results: List[IOBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count), min(8, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4, 8], max_workers)
 
     test_configs = [
         {"query_type": "select", "num_queries": 30, "name": "SQLite SELECT"},
@@ -480,6 +495,16 @@ def parse_args() -> argparse.Namespace:
         help="İnternet gerektiren network I/O testlerini atla",
     )
 
+    parser.add_argument(
+        "--max-workers", "-w",
+        type=int,
+        default=None,
+        help=(
+            "Test edilecek maksimum IO worker sayısı (default: cpu_count). "
+            "İzolasyon aktifken axion_cpus sayısını aşmamalı."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -488,9 +513,16 @@ def main() -> int:
     isolation_mode = args.mode
     profile = args.profile
 
+    cpu_count = multiprocessing.cpu_count()
+    max_workers = args.max_workers if args.max_workers is not None else cpu_count
+    if max_workers < 1:
+        print(f"[!] --max-workers değeri geçersiz: {max_workers} (>=1 olmalı)")
+        return 2
+
     print("=" * 70)
     print("Axion - I/O-Bound Performance Benchmark (Isolated)")
     print(f"Mode: {isolation_mode}   Profile: {profile}")
+    print(f"CPU count: {cpu_count}   Max workers: {max_workers}")
     print("=" * 70)
 
     base_dir = Path(__file__).parent
@@ -516,16 +548,22 @@ def main() -> int:
 
     try:
         print("\n[1] FILE I/O")
-        all_results.extend(run_file_io_benchmark(str(scripts["file_io"]), isolation_mode, profile))
+        all_results.extend(run_file_io_benchmark(
+            str(scripts["file_io"]), isolation_mode, profile, max_workers
+        ))
 
         if not args.skip_network:
             print("\n[2] NETWORK I/O")
-            all_results.extend(run_network_io_benchmark(str(scripts["network_io"]), isolation_mode, profile))
+            all_results.extend(run_network_io_benchmark(
+                str(scripts["network_io"]), isolation_mode, profile, max_workers
+            ))
         else:
             print("\n[2] NETWORK I/O — atlandı (--skip-network)")
 
         print("\n[3] DATABASE I/O")
-        all_results.extend(run_database_io_benchmark(str(scripts["database_io"]), isolation_mode, profile))
+        all_results.extend(run_database_io_benchmark(
+            str(scripts["database_io"]), isolation_mode, profile, max_workers
+        ))
 
         print_summary_table(all_results)
 

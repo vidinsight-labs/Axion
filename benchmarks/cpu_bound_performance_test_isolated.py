@@ -40,6 +40,18 @@ ISOLATION_MODE_FULL = "full"
 ISOLATION_MODE_OFF = "off"
 
 
+def _resolve_worker_configs(candidates: List[int], max_workers: int) -> List[int]:
+    """Aday worker sayılarını [1, max_workers] aralığına kırp, tekilleştir, sırala."""
+    out: List[int] = []
+    seen = set()
+    for c in candidates:
+        v = max(1, min(c, max_workers))
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return sorted(out)
+
+
 def build_isolation_config(mode: str, profile: str) -> CpuIsolationConfig:
     """
     İzolasyon modu + profile için CpuIsolationConfig üretir.
@@ -294,10 +306,13 @@ def _make_engine(num_cpu_workers: int, isolation_mode: str, profile: str) -> Eng
     return engine
 
 
-def run_fibonacci_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[CPUBenchmarkResult]:
+def run_fibonacci_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[CPUBenchmarkResult]:
     results: List[CPUBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count), cpu_count]
+    worker_configs = _resolve_worker_configs(
+        [1, 2, 4, max_workers], max_workers
+    )
 
     for num_workers in worker_configs:
         engine = _make_engine(num_workers, isolation_mode, profile)
@@ -319,10 +334,11 @@ def run_fibonacci_benchmark(script_path: str, isolation_mode: str, profile: str)
     return results
 
 
-def run_prime_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[CPUBenchmarkResult]:
+def run_prime_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[CPUBenchmarkResult]:
     results: List[CPUBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4], max_workers)
 
     for num_workers in worker_configs:
         engine = _make_engine(num_workers, isolation_mode, profile)
@@ -344,10 +360,11 @@ def run_prime_benchmark(script_path: str, isolation_mode: str, profile: str) -> 
     return results
 
 
-def run_prime_chunk_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[CPUBenchmarkResult]:
+def run_prime_chunk_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[CPUBenchmarkResult]:
     results: List[CPUBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4], max_workers)
 
     test_configs = [
         {"start": 1_000_000, "range": 20_000, "extra_load": 300, "name": "Light"},
@@ -387,10 +404,11 @@ def run_prime_chunk_benchmark(script_path: str, isolation_mode: str, profile: st
     return results
 
 
-def run_matrix_benchmark(script_path: str, isolation_mode: str, profile: str) -> List[CPUBenchmarkResult]:
+def run_matrix_benchmark(
+    script_path: str, isolation_mode: str, profile: str, max_workers: int
+) -> List[CPUBenchmarkResult]:
     results: List[CPUBenchmarkResult] = []
-    cpu_count = multiprocessing.cpu_count()
-    worker_configs = [1, 2, min(4, cpu_count)]
+    worker_configs = _resolve_worker_configs([1, 2, 4], max_workers)
     matrix_sizes = [100, 150, 200]
 
     for num_workers in worker_configs:
@@ -484,6 +502,17 @@ def parse_args() -> argparse.Namespace:
         help="CPU isolation profili (default: balanced)",
     )
 
+    parser.add_argument(
+        "--max-workers", "-w",
+        type=int,
+        default=None,
+        help=(
+            "Test edilecek maksimum worker sayısı (default: cpu_count). "
+            "İzolasyon aktifken axion_cpus sayısını aşmamalı; aksi halde "
+            "worker'lar oversubscribe olur ve performans düşer."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -492,9 +521,16 @@ def main() -> int:
     isolation_mode = args.mode
     profile = args.profile
 
+    cpu_count = multiprocessing.cpu_count()
+    max_workers = args.max_workers if args.max_workers is not None else cpu_count
+    if max_workers < 1:
+        print(f"[!] --max-workers değeri geçersiz: {max_workers} (>=1 olmalı)")
+        return 2
+
     print("=" * 70)
     print("Axion - CPU-Bound Performance Benchmark (Isolated)")
     print(f"Mode: {isolation_mode}   Profile: {profile}")
+    print(f"CPU count: {cpu_count}   Max workers: {max_workers}")
     print("=" * 70)
 
     base_dir = Path(__file__).parent
@@ -517,16 +553,24 @@ def main() -> int:
 
     try:
         print("\n[1] FIBONACCI")
-        all_results.extend(run_fibonacci_benchmark(str(scripts["fibonacci"]), isolation_mode, profile))
+        all_results.extend(run_fibonacci_benchmark(
+            str(scripts["fibonacci"]), isolation_mode, profile, max_workers
+        ))
 
         print("\n[2] PRIME FINDING")
-        all_results.extend(run_prime_benchmark(str(scripts["prime"]), isolation_mode, profile))
+        all_results.extend(run_prime_benchmark(
+            str(scripts["prime"]), isolation_mode, profile, max_workers
+        ))
 
         print("\n[3] PRIME CHUNK")
-        all_results.extend(run_prime_chunk_benchmark(str(scripts["prime_chunk"]), isolation_mode, profile))
+        all_results.extend(run_prime_chunk_benchmark(
+            str(scripts["prime_chunk"]), isolation_mode, profile, max_workers
+        ))
 
         print("\n[4] MATRIX MULTIPLICATION")
-        all_results.extend(run_matrix_benchmark(str(scripts["matrix"]), isolation_mode, profile))
+        all_results.extend(run_matrix_benchmark(
+            str(scripts["matrix"]), isolation_mode, profile, max_workers
+        ))
 
         print_summary_table(all_results)
 
